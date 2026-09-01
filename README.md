@@ -364,34 +364,42 @@ So the halt is upstream of both the FIFO and the SPU dispatch. The AMGL overflow
 that follows it is a consequence — the PPU stops consuming, its ring fills — not
 the cause.
 
-The main thread is **not** deadlocked. `HLE_BT_EVERY=20000` (new) dumps a guest
-stack every nth HLE call per thread — a sampler that follows a thread wherever
-it is, unlike `WAITBT_EVERY`, which only sees threads blocked on an event queue.
-At HLE call 1,440,000 the main thread is still making calls, deep in the title's
-own dispatch:
+### Attract mode is a Sofdec movie, and the title stops immediately before it
+
+`GCM_FLIPCOUNT=1` (new) counts every flip with a timestamp — `FLIP_DBG` caps at
+20 lines, which answers "did it ever flip?" and not "is it still flipping?".
+It also showed that the live engine's own frame counter is not the guest's frame
+rate: that counts the ticker's presents, which keep going after the title stops.
+The guest numbers are unambiguous:
 
 ```
-func_004E6A6C+0x228 func_0019BBB4+0x4FC func_003739C4+0xC0  func_00018B48+0x14
-func_001679B4+0x14  func_0050AC7C+0x10  func_00339774+0x228 func_0037AD48+0x16C
+[flip] 1   at 0 ms
+[flip] 500 at 43157 ms
+[flip] 700 at 49969 ms      <- and nothing for the remaining 150 s
 ```
 
-`func_0037AD48` and `func_003739C4` are the same 0x37xxxx region that appears in
-the chain that was scrambling the OPD table, so that is where the title's main
-state machine lives.
+**VF5 renders at 14–29 fps for fifty seconds and then its render loop stops
+dead**, while the main thread carries on making HLE calls (1.44 M of them, still
+climbing, deep in `func_0037AD48` / `func_003739C4` — the title's own state
+machine). Not slow. Not deadlocked. Stopped rendering.
 
-Two things a next session should weigh, neither yet proven causal:
+And the disc says what it was about to do:
 
-* A CRI worker (`func_005108C4`, the same loop that used to spin on the corrupt
-  descriptor) takes **1.64 M `sys_lwmutex_lock`s**, ~4,100 loop turns a second.
-  Its exit condition reads a flag word at `obj+0x24` that something else is
-  meant to clear; it is spinning whether or not that starves anything.
-* The main loop turns only ~2.5 times a second. Whether that is the spin above
-  stealing the CPU, or the loop genuinely having that much work per iteration,
-  has not been measured.
+```
+vfs/PS3_GAME/USRDIR/movie/vf5adv_2ch_2.sfd      <- "adv" = advertise/attract
+vfs/PS3_GAME/USRDIR/movie/vf5adv_51ch_2.sfd
+vfs/PS3_GAME/USRDIR/movie/vf5verBadv_2ch_2.sfd
+```
 
-So: the title is *running*, not hung, and simply stops presenting. That is a
-different problem from the one this section originally described, and it is
-where the next session starts.
+**Attract mode is a Sofdec movie.** The title loads the attract UI archives
+(`spr_s_adv.farc`, `aet_s_adv.bin`), finishes the CRIWARE logo — and then stops,
+without ever opening `vf5adv_2ch_2.sfd`. Its CRI ADXM (Sofdec) threads are up
+(`cri_adxm_vv_proc` / `_vsync_proc` / `_fs_proc` / `_idle_proc`) and the live
+engine's `movie=` counter never leaves zero.
+
+So the remaining gap has a name and a filename: whatever CRI ADXM needs before
+it will open and play that file. That is a video-decode subsystem, not another
+missing NID, and it is where the next session starts.
 
 ### The root cause was one bogus function boundary
 
