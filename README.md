@@ -346,13 +346,31 @@ registry fix earlier in the session is what lets that happen at all — and then
 the title stops presenting and AMGL starts reporting overflow. The overflow is
 downstream: with the PPU waiting on SPU results that never come, its ring fills.
 
-Two loose ends visible in the same window: `sys_spu_thread_set_spu_cfg` /
-`get_spu_cfg` (lv2 187/188) are stubs, called exactly here; and the ring-recycle
-condition was relaxed from "FIFO fully drained" to "the head of the ring is
-consumed" (the faithful condition — hardware only needs the bytes about to be
-overwritten to have been read). The relaxed condition fires where the old one had
-stopped firing entirely, and **does not move this title**, which is what says the
-overflow is a symptom.
+### What the stall is not
+
+The halt is deterministic — the same flip, ~1,650, every run. Four things were
+tried against it and none moved it, which is worth recording so they are not
+tried again:
+
+| Attempt | Result |
+|---|---|
+| `SPU_INTERP_UNLIFTED=1` — interpret the SPU code the delegate threads branch into rather than ending the job at "branch to LS 0" | the threads stop instantly-completing and run properly; **same stall** |
+| lv2 187/188 (`sys_spu_thread_set_spu_cfg` / `get_spu_cfg`) implemented — they were stubs, called exactly here | **same stall** |
+| Ring recycle relaxed from "FIFO fully drained" to "head of the ring consumed" | fires where the old condition had stopped firing; **same stall** |
+| Ring recycle forced once `current` has already passed `end` (a wedged ring can never recover on its own) | **same stall** |
+| A 600-second run | frames still stop at the same count |
+
+So the halt is upstream of both the FIFO and the SPU dispatch. The AMGL overflow
+that follows it is a consequence — the PPU stops consuming, its ring fills — not
+the cause.
+
+What has *not* been done, and is the obvious next step: sample the guest thread
+stacks at the moment presenting stops. The main loop is still polling its event
+queue at 60 Hz afterwards, so the title is alive and simply not submitting; the
+question is which of its own functions it is sitting in. `ppu_dump_guest_stack`
+exists and the watchdog already samples, but its output was too sparse to name
+the frame — driving it from the present-count plateau rather than a timer is the
+way in.
 
 ### The root cause was one bogus function boundary
 
