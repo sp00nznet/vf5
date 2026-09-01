@@ -321,10 +321,38 @@ still.
 
 **Attract mode has not been reached.** The title gets through its load and into
 the boot-logo sequence, then holds on the CRIWARE screen and stops presenting
-around flip 1,700. It has already opened the attract archives by then —
+around flip 1,600. It has already opened the attract archives by then —
 `rom/2d/spr_s_adv.farc`, `spr_s_wadv.farc`, `aet_s_adv.bin`, `aet_s_wadv.bin`
 ("adv" being the arcade term for the attract/advertise demo) — so the assets the
 idle screen is built from are loaded and it simply never advances to them.
+
+### Where it stops, precisely
+
+The stall lines up with a second SPU thread group starting:
+
+```
+[SPU] group_create -> id=0x1001 num=2 prio=100 name=SPU Delegate
+[SPU] thread tid=0x2001 image @0x10097C80 (163536 bytes) matched lifted
+      workload fp=0x4D26A2BCEDC9D2FA image_id=1
+[SPU] group_start id=0x1001 tid=0x2001 -> spawned host thread
+[SPU] thread tid=0x2002 image @0x10097C80 ... -> spawned host thread
+[ppu] lv2_syscall 187 (stub)      <- sys_spu_thread_set_spu_cfg
+[ppu] lv2_syscall 188 (stub)      <- sys_spu_thread_get_spu_cfg
+```
+
+"SPU Delegate" is the group a fighting game runs its geometry, animation and
+render work on. Both its threads find their lifted image and spawn — the
+registry fix earlier in the session is what lets that happen at all — and then
+the title stops presenting and AMGL starts reporting overflow. The overflow is
+downstream: with the PPU waiting on SPU results that never come, its ring fills.
+
+Two loose ends visible in the same window: `sys_spu_thread_set_spu_cfg` /
+`get_spu_cfg` (lv2 187/188) are stubs, called exactly here; and the ring-recycle
+condition was relaxed from "FIFO fully drained" to "the head of the ring is
+consumed" (the faithful condition — hardware only needs the bytes about to be
+overwritten to have been read). The relaxed condition fires where the old one had
+stopped firing entirely, and **does not move this title**, which is what says the
+overflow is a symptom.
 
 ### The root cause was one bogus function boundary
 
