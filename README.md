@@ -397,37 +397,41 @@ without ever opening `vf5adv_2ch_2.sfd`. Its CRI ADXM (Sofdec) threads are up
 (`cri_adxm_vv_proc` / `_vsync_proc` / `_fs_proc` / `_idle_proc`) and the live
 engine's `movie=` counter never leaves zero.
 
+### The reserve contract, read off the disassembly
+
+All three `gcmReserve` variants have the same failure path — this is
+`func_00596754`, the one the error printer's call chain actually names:
+
+```
+00596780:  cmplw cr7, r9, r0      ; current+8 vs end
+00596784:  bgt   cr7, 0x5967BC    ; no room -> call the callback
+...
+005967BC:  lwz   r9, 0xC(r3)      ; ctx->callback OPD
+005967D0:  bctrl
+005967D8:  cmpdi cr7, r3, 0
+005967DC:  bne   cr7, <return>    ; NON-ZERO: give up
+005967E0:  lwz   r10, 0x8(r31)    ; ZERO: reload current...
+005967E4:  b     0x596788         ; ...and write anyway, skipping the check
+```
+
+So **the contract is "callback returns 0 = I made room, retry"**, and AMGL's
+callback (`func_0048BB70`) only prints `[AMGL]:[ERROR] Command Buffer Overflow!`
+and returns 0. Each failed reserve is therefore one message and **one write past
+`end`** — into whatever follows the segment. Not a spin inside reserve: a slow
+corruption of whatever lives after the current command segment, once per
+command, for as long as the title keeps rendering.
+
+That fits the shape of the failure better than anything else here: VF5 renders
+correctly for ~700 flips and then stops, rather than failing immediately.
+
+It also means the runtime is wrong somewhere *upstream*: on hardware this path
+is never taken, because AMGL's own code guarantees a segment never fills — it
+allocates a new one first. Something we report or fail to do makes a segment
+fill that shouldn't. `cellGcmSetDefaultCommandBuffer` is the prime suspect: VF5
+imports it, and our implementation zeroes a host-side struct and does not touch
+the title's `gCellGcmCurrentContext` at all.
+
 ### Correcting the ring reading
-
-`GCM_CTXDBG` at the stall shows the context is **not** the 512 KB ring it starts
-as. The title sub-allocates:
-
-```
-begin=0x4AEC6670  end=0x4AEFFFFC  current=0x4AEF05D8
-```
-
-`begin` is not aligned to anything — AMGL carves segments out of its buffer and
-re-points `gCellGcmCurrentContext` at each one. And at the moment the title
-stops, `current` is **64 KB short of `end`**: the segment is not full. The
-runtime's recycle correctly does not fire (0 times after the last flip), because
-there is nothing to recycle.
-
-So "the ring overflows and that stops it" was wrong. The overflow message is
-printed from `gcmReserve` — three different call sites, one of which may be
-asking for a block far larger than 8 bytes — while the segment still has room.
-Resetting `current` to `begin` is also the wrong response for a sub-allocated
-segment: the title expects its callback to hand back a *new* segment, not to
-rewind the current one.
-
-What is solid: after its last flip the main thread's stack is
-`func_004828E4` / `func_004832AC` → `func_0048BBB4` → the printf chain, i.e. the
-render path calling AMGL's error printer and retrying, forever. The title stops
-rendering at guest flip ~700 (35 s in), deterministically, and everything after
-that is the retry loop.
-
-`TTY_NO_DEDUPE` is worth knowing about here: the runtime now collapses a
-repeating guest log line (88,000 of them to 56), which took 30% off the time to
-reach that point and confirmed the logging was not the cause.
 
 ### The root cause was one bogus function boundary
 
