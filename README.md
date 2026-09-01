@@ -699,6 +699,8 @@ regenerates all of it from your own dump.
 
 ## Credits & legal
 
+MIT licensed — see [LICENSE](LICENSE).
+
 Built on [ps3recomp](https://github.com/sp00nznet/ps3recomp) and its
 contributors' work — in particular [@canersaka](https://github.com/canersaka)'s
 live NV4097 draw engine and [@sagemono](https://github.com/sagemono)'s RSX
