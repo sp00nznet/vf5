@@ -535,9 +535,29 @@ The full chain, every step evidenced:
 4. Nothing sets it back, because the state never finishes coming up
 5. `movie/vf5adv_2ch_2.sfd` is never opened
 
-That is the end of what can be established without implementing Sofdec/ADXM
-playback — an SPU video-decode subsystem, and the one remaining thing between
-this port and attract mode.
+### Confirmed by intervention
+
+`PPU_POKE8=104D320A:1` with `PPU_POKE_AFTER_MS=45000` holds the render gate on
+from 45 s in — after the title has loaded normally, so the run still opens all
+134 files. Result:
+
+| | baseline | gate held on |
+|---|---|---|
+| guest flips | 780 | **7,940** |
+| files loaded | 134 | 134 |
+
+The title renders continuously instead of stopping. **The gate is the
+mechanism.** (Forcing it from t=0 instead proves nothing — the title then opens
+15 files, because the assertion changes its behaviour on the way to the moment
+in question.)
+
+And the frames it draws with the gate held on are **blank white**. The gate was
+what stopped the picture; the state behind it has no content, because the Sofdec
+movie that state exists to play never loads.
+
+So: implementing Sofdec/ADXM playback — an SPU video-decode subsystem — is the
+one remaining thing between this port and attract mode. That is now established
+by making the thing happen, not by inference from a filename.
 
 ### The command buffer was never why it stops
 
