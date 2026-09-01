@@ -456,10 +456,39 @@ candidate calls after `0x37AD48` make 2, 1, 0 and 0 direct calls between them.
 The whole render dispatch is indirect — function pointers and vtables, which is
 what a scene graph looks like.
 
-So the next instrument is an **indirect-call tracer**: log `bctrl` targets per
-thread, diff the last good frame against the first missing one. Static reading
-will not get there, and neither will another environment variable on the
-existing tools. That is the honest end of what this session can establish.
+So the instrument is an **indirect-call tracer**, and it now exists:
+`BCTRL_RING=<file>` keeps the last 512 indirect targets per thread and the flip
+window dumps them, to their own file — a 512-entry line on stderr interleaves
+with everything else and a spliced ring is worse than none.
+
+Diffing flip 777 (rendering normally) against flip 782 (the last one) gives a
+one-line answer:
+
+```
+only in flip 782: 001CF450
+only in flip 777: 00026AA4 00026AFC 0002F9C0 0002F9CC 0002FAC0
+                  0002FD00 000300A8 000309DC 00031FE0 00036934
+```
+
+**`func_001CF450` is called for the first time on the last frame the title
+draws**, and ten functions in the 0x26xxx–0x36xxx range stop being called. It is
+small enough to read whole:
+
+```
+001CF450:  lwz  r9, -0x43D8(r2)   ; a TOC global
+001CF458:  li   r4, 1
+001CF464:  lwz  r3, 0x0(r9)
+001CF468:  bl   0x19A7F0          ; enter, with (obj, 1)
+001CF470:  bl   0x36B8D0          ; ...which is a bare `blr` -- a stub
+001CF478:  lwz  r3, -0x43BC(r2)
+001CF47C:  bl   0x373414          ; walks an intrusive list
+001CF488:  li   r3, 1             ; return 1
+```
+
+That is a state transition: the title walks through this door on frame 782 and
+never renders again. `func_0019A7F0` and the list walk in `func_00373414` are
+what to read next, and the ten functions that stop being called name the state
+it left.
 
 ### The command buffer was never why it stops
 
