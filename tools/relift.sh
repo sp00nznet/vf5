@@ -10,6 +10,13 @@ mkdir -p analysis
 python "$PS3RECOMP/tools/find_functions.py" game/EBOOT.elf \
     --output analysis/functions.json
 
+# find_functions plants a start in the middle of a function now and then.
+# Lifted as its own function, the half after the split continues the first
+# half's loop with loop-carried registers that were never set and a frame that
+# was never allocated. VF5 lost an OPD table exactly that way and rendered
+# nothing for the whole run; see the README. Twelve of 17,856 were wrong.
+python tools/merge_split_loops.py analysis/functions.json game/EBOOT.elf
+
 # --code-end 0x5CC830 is the end of the last SHF_EXECINSTR section, which is
 # also the section holding the .lib.stub import trampolines (0x5CBAD0..0x5CC810
 # -- they must stay INSIDE the bound or --hle-stubs has nothing to rewrite).
