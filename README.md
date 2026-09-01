@@ -70,7 +70,7 @@ is a real test of the engine rather than a UI composite.
 | PPU lifting | **done** — 18,514 functions emitted, 7,855 unique call targets, 105 MB of C++ |
 | HLE NID table | **done** — 1,040 handlers across 88 modules |
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
-| Boot | **runs, zero unresolved imports** — clears and flips; no geometry yet, see below |
+| Boot | **runs clean at ~63 fps, zero unresolved imports, zero errors** — clears and flips every frame; no geometry yet, see below |
 
 ### The binary
 
@@ -171,16 +171,11 @@ readers, its worker pool waking ~48 Hz, its loader thread pumping a 9-second
 event queue that delivers ~180 events/sec, its asset databases open, clearing
 and flipping a black loading screen.
 
-### What is still in the way: AMGL's command buffer
+### AMGL's command buffer — found and fixed
 
-`packets[seen=0] groups[seen=0]`. Rendering stops **1.6% into the run**; after
-that the log is the title's own `[AMGL]:[ERROR] Command Buffer Overflow!` and
-`cellGcmAddressToOffset failed` for addresses walking past the end of its own
-4 MB mapping.
-
-The message is the game's, so it is also the cheapest breakpoint available.
-`TTY_BT="Command Buffer Overflow"` (new, below) gives the chain, and the
-function it lands in is textbook libgcm `gcmReserve` at `0x00595358`:
+The title's own error message turned out to be the cheapest breakpoint
+available. `TTY_BT="Command Buffer Overflow"` (new, below) gives the chain, and
+it lands in textbook libgcm `gcmReserve` at `0x00595358`:
 
 ```
 00595370:  lwz   r10, 0x8(r3)     ; current = ctx->current
@@ -189,14 +184,13 @@ function it lands in is textbook libgcm `gcmReserve` at `0x00595358`:
 00595384:  cmplw cr7, r9, r0
 00595388:  bgt   cr7, 0x5953C0    ; no room -> call ctx->callback
 ...
-005953C0:  lwz   r9, 0xC(r3)      ; ctx->callback OPD
 005953D4:  bctrl
 005953DC:  cmpdi cr7, r3, 0
 005953E0:  bne   cr7, <return>    ; non-zero: give up
 005953E4:  lwz   r10, 0x8(r31)    ; zero: reload current and write ANYWAY
 ```
 
-and the callback it invokes is `0x0048BB70`, which is *only*:
+and the callback AMGL installed, `0x0048BB70`, is *only*:
 
 ```
 0048BBB4:  lwz  r3, 0x2948(r2)    ; "[AMGL]:[ERROR] Command Buffer Overflow!"
@@ -204,32 +198,59 @@ and the callback it invokes is `0x0048BB70`, which is *only*:
 0048BBD0:  li   r3, 0             ; ...and return 0
 ```
 
-So AMGL's command-buffer-full callback does not recycle anything — it prints
-and returns 0, and `gcmReserve` takes 0 as "retry" and writes past `end`
-regardless. That is the overrun. AMGL expects its buffer to be reset once per
-frame by its own code and treats filling it as an error that cannot happen.
+`gcmReserve` reads 0 as "retry" and writes past `end` regardless. That was the
+overrun.
 
-**Three candidates ruled out by measurement, not argument:**
+Then `GCM_CTXDBG=1` (new) showed *which* buffer:
+
+```
+[CTX] gCellGcmCurrentContext@0x1071CDC0 -> 0x1071CDB0  begin=4AE00000
+      end=4AE7FFFC current=4AE004E4 callback=006A8030  (ours=0x0F800000)
+```
+
+The title never uses the context `cellGcmInit` handed back. It drives a **512 KB
+ring of its own at EA 0x4AE00000** — exactly where every `put` it writes
+resolves — with its own do-nothing callback. Hardware never fills that ring
+because it is recycled once the RSX has consumed it, so the runtime now does
+that on the title's context when it is provably safe: the walker has drained
+everything submitted (`get == put`) and `current` is within a page of `end`.
+Append the JUMP at `current` the way the SDK's own callback does, reset
+`current` to `begin`, point `put`/`get` there. Inert for any title whose own
+callback recycles.
+
+| | before | after |
+|---|---|---|
+| `Command Buffer Overflow` | 144,709 | **0** |
+| `AddressToOffset failed` | 1,802 | **0** |
+| guest clears reaching the engine | 819, stopping 1.6% in | **2,038 and still climbing at cutoff** |
+| frame rate | ~32 fps | **~63 fps** |
+
+**The title now renders continuously for the whole run instead of dying 1.6%
+into it.**
+
+### What is still in the way
+
+`packets[seen=0] groups[seen=0]` — it clears and flips every frame but submits
+no geometry, and stops opening files at twenty. It is sitting in its load state.
+
+What the log says about that state: the loader thread (tid 5) does one
+`cond_wait(cond=4)` after the last read and is never signalled again. Its
+signaller is the main thread, which is otherwise healthy — running its frame
+loop at 63 fps, pumping an event queue that delivers ~180 events/sec, worker
+pool waking ~48 Hz. So it is a producer/consumer that has stopped handing out
+work, not a hang.
+
+Ruled out by probe, again rather than by argument:
 
 | Hypothesis | Probe | Result |
 |---|---|---|
-| The title reads `ctrl->get` | `GCM_GET_EQ_PUT=1` publishes get as fully drained | overflow unchanged — it does **not** read `get` |
-| It polls an RSX label | `cellGcmGetLabelAddress` call count; `[RSX] label write` count | **zero of each** — no label is requested or written all run |
-| It polls a report | `cellGcmGetReport` | never called — provable now that unresolved NIDs are zero |
+| The dormant `CriSr` SPU thread gates it | `RD_SPU_INTERP=1 RD_SPU_INTERP_ASYNC=1` | no change on any counter |
+| A lost wakeup on cond 4 | `FLOW_CONDKICK=1` caps infinite cond waits at 1.5 s | no change |
+| A failed file open | every `cellFs` call in the run | 20 opens, 37 reads, **zero failures** |
 
-The flip handshake, by contrast, is healthy — `ResetFlipStatus` → `WAITING` →
-polls → `DONE` → next buffer, cycling correctly all run. So frame pacing is not
-it either.
-
-What is left is the buffer AMGL is actually writing into. `_cellGcmInitBody`
-sets our injected context to `begin=0x4A400000, end=0x4AAFF000` (7 MB), and the
-guest advances its `current` to `0x4A400418` — 262 words — and then never
-touches it again, while every `put` it writes lands at IO `0xA00000+`, inside
-the separate 4 MB it mapped with `cellGcmMapMainMemory`. The title switches to a
-command buffer of its own and our context stops being the one that matters. The
-next step is to find where that switch happens (`cellGcmSetDefaultCommandBuffer`
-and `cellGcmSetQueueHandler` are both imported and both are stubs today) and
-make the runtime follow it.
+Notable: the title never calls `cellFsLseek` despite importing it, and reads
+`voice.afs` in 2048-byte sectors — CRI's file-system shape. `cellRescInit` is
+still never reached, so nothing downstream of the load has started.
 
 ### What the SPU interpreter ruled out
 
@@ -249,6 +270,9 @@ Both in `ps3recomp/libs/video/cellGcmSys.c`, both off by default:
   `get` is about to decode and what the title just wrote at `put`.
 * `GCM_DRAINDBG=1` now also prints `[DRAINEND] <reason>` — why each pass
   stopped and how far it got, with every break site in the walk tagged.
+* `GCM_CTXDBG=1` — report `gCellGcmCurrentContext`: which context the title is
+  actually driving, and its begin/end/current/callback. This is what showed VF5
+  never uses the one `cellGcmInit` handed back.
 * `GCM_GET_EQ_PUT=1` — publish `get` as having reached `put`. A probe, not a
   fix: it removes the back-pressure a title uses to avoid overwriting commands
   the GPU has not read. It answers one question — is the title reading `get`?
