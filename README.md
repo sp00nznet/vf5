@@ -364,13 +364,24 @@ So the halt is upstream of both the FIFO and the SPU dispatch. The AMGL overflow
 that follows it is a consequence — the PPU stops consuming, its ring fills — not
 the cause.
 
-What has *not* been done, and is the obvious next step: sample the guest thread
-stacks at the moment presenting stops. The main loop is still polling its event
-queue at 60 Hz afterwards, so the title is alive and simply not submitting; the
-question is which of its own functions it is sitting in. `ppu_dump_guest_stack`
-exists and the watchdog already samples, but its output was too sparse to name
-the frame — driving it from the present-count plateau rather than a timer is the
-way in.
+The main thread is parked in a stable loop. `WAITBT_EVERY=200` (new) dumps a
+guest stack every nth wait instead of once, and VF5's main thread reads
+byte-identical at wait #0 and wait #400 — same functions, same offsets, same
+`sp`:
+
+```
+func_004F39A0+0x40  func_004F2C08+0x58  func_004F3168+0x1A4  func_004F291C+0x18
+func_00010630+0x78  func_004F2A20+0x68  func_004ECF94+0x18   func_00019034+0x7C
+func_0033B828+0x58  func_00111770+0x14  func_0037A978+0x54   func_00018304+0x10
+func_00017E38+0x14 ... func_00010244+0x8
+```
+
+It is not advancing through states, and it turns only ~2.5 times a second while
+presents arrive at ~14/s — so the render submission comes from a different
+thread, and identifying *that* thread and where it parks is the next concrete
+step. `func_0037A978` is worth noting: it also appears in the call chain that
+was scrambling the OPD table, so it is somewhere in the title's own main
+dispatch.
 
 ### The root cause was one bogus function boundary
 
