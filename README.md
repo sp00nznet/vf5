@@ -309,29 +309,65 @@ animation data the attract screens are built from.
 (A title that never pumps sysutil would never see a deferred answer at all, so
 the old synchronous call stays as the fallback until a pump is observed.)
 
-### The current blocker
+### The current blocker: a corrupted OPD table
 
-The run now ends in a named abort rather than an idle spin:
+The run ends in a named abort:
 
 ```
 [ppu] FATAL: stuck calling 0x500088B0 (2000 times) -- aborting run
-[ppu]   tid=7 lr=0x00510980 r3=0x1070ACD8 r31=0x1070ACD8
-[GSTACK:stuck-caller] cia=0x006AE470  func_005108C4+0xBC
-      ARG[0x40003450] vtbl=0x68C87F3F -> method code=0x0 toc=0x0
+[ppu]   r9=0x006ADE30 -> 500088B0 6B0048B9 500088B0 6B009CBA
+[ppu]   tid=6 lr=0x00510980 r2=0x6B0048B9 r3=0x1070AD40
 ```
 
-`tid 7` is `cri_adxm_vsync_proc` and `func_005108C4` is the CRI worker body. It
-calls through a pointer into `0x500088B0` — inside the `_sys_heap_*` window at
-`0x50000000` — and the object it reads has a garbage vtable. A related
-`bctr to NULL from func_005872FC` fires on the mixer thread with `r3=0x50000000`.
+`func_005108C4` is CRI's worker body and the call is the plain ELFv1 idiom:
 
-Both point at the same suspect: the `_sys_heap_*` family registered earlier this
-session is backed by a bump allocator in a private guest window
-(`YZ_HEAP_BASE 0x50000000`) that ignores the heap id and never frees. That was
-enough to get past the out-of-memory path that opened the dialog; it is not
-enough for CRI, which allocates and frees working buffers continuously. Routing
-those allocations through the same memory the title itself allocated — rather
-than a side window nothing else knows about — is the next step.
+```
+005108EC:  lwz r9, 0x30(r31)   ; r9 = OPD
+005108F8:  lwz r0, 0x0(r9)     ; code
+0051090C:  lwz r2, 0x4(r9)     ; toc
+00510910:  bctrl
+00510920:  beq 0x5108EC        ; loop while the callback says "again"
+```
+
+so it loops until the callback runs, and the callback can never run. But
+`r9 = 0x006ADE30` is **static data in the ELF**, and the EBOOT ships a perfectly
+good OPD table there:
+
+```
+file:     0050B948 006BB088   0050B99C 006BB088   0050BA90 006BB088 ...
+runtime:  500088B0 6B0048B9   500088B0 6B009CBA
+```
+
+Every descriptor has the correct TOC `0x006BB088` on disc. At runtime the table
+has been **overwritten with a byte-permuted copy of itself** — and the transform
+is exact:
+
+```
+ror64(bswap64(0x0050B948006BB088), 16) == 0x500088B06B0048B9
+```
+
+Per 8-byte descriptor: every 16-bit halfword byte-swapped, then halfwords 1 and
+3 exchanged. That is the signature of a misaligned vector store — an
+`lvsl`/`lvsr` + `vperm` copy idiom with the wrong lane order, which is exactly
+how a PPC memcpy moves unaligned bytes. Nothing about it is game logic: the
+title's own static function table is being scrambled underneath it.
+
+`0x500088B0` looks like a heap pointer and is not — it is a permutation of the
+real bytes that happens to land in the `_sys_heap` window's range. Chasing it as
+an allocator bug (the `_sys_heap_*` free list below was rewritten first) does
+not help: the address is byte-identical across runs and the allocator makes
+exactly **two** allocations in the whole run.
+
+The next step is naming the store. `YDKJ_AWATCH8` only sees `vm_write8`, so a
+bulk or vector store is invisible to it; the page-guard watchpoint
+(`ppu_guard_page`) is the tool, but it currently arms only after a *lifted*
+store to the watched word, which by definition this is not. Arming it directly
+on `0x006ADE30` at boot is a small change and would name the writer in one run.
+
+While in the area, `_sys_heap_*` did get a real allocator: size-binned free
+lists instead of a bump pointer with a no-op free, so a title whose middleware
+allocates and frees continuously reuses memory instead of walking the window.
+Correct, and not what was wrong here.
 
 ### Thread inventory
 
