@@ -364,24 +364,34 @@ So the halt is upstream of both the FIFO and the SPU dispatch. The AMGL overflow
 that follows it is a consequence — the PPU stops consuming, its ring fills — not
 the cause.
 
-The main thread is parked in a stable loop. `WAITBT_EVERY=200` (new) dumps a
-guest stack every nth wait instead of once, and VF5's main thread reads
-byte-identical at wait #0 and wait #400 — same functions, same offsets, same
-`sp`:
+The main thread is **not** deadlocked. `HLE_BT_EVERY=20000` (new) dumps a guest
+stack every nth HLE call per thread — a sampler that follows a thread wherever
+it is, unlike `WAITBT_EVERY`, which only sees threads blocked on an event queue.
+At HLE call 1,440,000 the main thread is still making calls, deep in the title's
+own dispatch:
 
 ```
-func_004F39A0+0x40  func_004F2C08+0x58  func_004F3168+0x1A4  func_004F291C+0x18
-func_00010630+0x78  func_004F2A20+0x68  func_004ECF94+0x18   func_00019034+0x7C
-func_0033B828+0x58  func_00111770+0x14  func_0037A978+0x54   func_00018304+0x10
-func_00017E38+0x14 ... func_00010244+0x8
+func_004E6A6C+0x228 func_0019BBB4+0x4FC func_003739C4+0xC0  func_00018B48+0x14
+func_001679B4+0x14  func_0050AC7C+0x10  func_00339774+0x228 func_0037AD48+0x16C
 ```
 
-It is not advancing through states, and it turns only ~2.5 times a second while
-presents arrive at ~14/s — so the render submission comes from a different
-thread, and identifying *that* thread and where it parks is the next concrete
-step. `func_0037A978` is worth noting: it also appears in the call chain that
-was scrambling the OPD table, so it is somewhere in the title's own main
-dispatch.
+`func_0037AD48` and `func_003739C4` are the same 0x37xxxx region that appears in
+the chain that was scrambling the OPD table, so that is where the title's main
+state machine lives.
+
+Two things a next session should weigh, neither yet proven causal:
+
+* A CRI worker (`func_005108C4`, the same loop that used to spin on the corrupt
+  descriptor) takes **1.64 M `sys_lwmutex_lock`s**, ~4,100 loop turns a second.
+  Its exit condition reads a flag word at `obj+0x24` that something else is
+  meant to clear; it is spinning whether or not that starves anything.
+* The main loop turns only ~2.5 times a second. Whether that is the spin above
+  stealing the CPU, or the loop genuinely having that much work per iteration,
+  has not been measured.
+
+So: the title is *running*, not hung, and simply stops presenting. That is a
+different problem from the one this section originally described, and it is
+where the next session starts.
 
 ### The root cause was one bogus function boundary
 
