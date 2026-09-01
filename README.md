@@ -489,36 +489,55 @@ small enough to read whole:
 obj->0x58 = 1` — a "request mode 1" on a global. So frame 782 is where the title
 *asks for the next state*.
 
-### And what it does instead of rendering: keeps running
+### Rendering is switched off on purpose, and never switched back on
 
-This took three wrong readings to get right, so here is the corrected version.
-
-The HLE stack sampler was printing `tid&7`, and that collides — threads 1, 9 and
-17 all land on slot 1. A stack I attributed to the main thread spinning in CRI
-was a *CRI worker's*. With the real id printed:
+The frame loop never stops. `func_0037A79C`, the per-frame dispatcher, has a
+three-instruction gate in it:
 
 ```
-GSTACK:hle#1350000 tid=1 ... func_003739C4+0xC0  func_00339774+0x228
-                            func_0037AD48+0x16C  func_0037AF20
+0037A834:  bl    0x370B10        ; the predicate
+0037A83C:  cmpdi cr7, r3, 0
+0037A840:  beq   cr7, 0x37A890   ; 0 -> skip the render entirely
+0037A844:  bl    0x370D1C        ; the render call
 ```
 
-**The main thread is still running its own per-frame driver at HLE call
-1,350,000.** It is not stuck, not deadlocked, not spinning in CRI. It runs the
-frame loop and simply stops calling `cellGcmSetFlip`.
+and `func_00370B10` is three instructions itself:
 
-Two other readings corrected along the way:
+```
+00370B10:  lwz r9, -0xD58(r2)    ; TOC global -> object 0x104D3208
+00370B14:  lbz r3, 0x2(r9)       ; a single byte at 0x104D320A
+00370B18:  blr
+```
 
-* `func_001F5860` is not "the flip" — the two stack offsets I read as different
-  branches (+0xC0 and +0xDC) are just the return addresses of two adjacent calls
-  inside it, and it looks like an allocator.
-* The globals the CRI lock pair tests are recursion/ownership checks, not a wait
-  condition; `PPU_POKE` holding them at 1 changes nothing.
+Watching that byte for a whole run (`YDKJ_AWATCH8=104D320A`) gives **exactly one
+write**:
 
-So the state is: **the frame loop runs, and the render/flip step inside it stops
-happening.** Why is inside the title's own per-frame logic
-(`func_0037AF20` → `func_0037A79C` → `func_00370A10`), and nothing in the
-runtime — no error, no unresolved import, no failed open, no overflow — is
-implicated any more.
+```
+[AWATCH8] write8 0x104D320A = 0x00  tid=1
+[GSTACK:aw8-writer] lr=0x0037BD0C
+```
+
+The main thread clears it, once, from `func_0037BCA0` — a state-object
+constructor that fills a dozen fields and then calls `func_003711E4`, which
+turns rendering off. Nothing ever writes it again.
+
+**So VF5 is not hung, not starved and not erroring. It disables rendering on
+purpose while it brings up the next state, and that state never becomes ready.**
+Which state: the one whose content is `movie/vf5adv_2ch_2.sfd`, a Sofdec video
+that is never opened because CRI's movie path is not implemented here.
+
+The full chain, every step evidenced:
+
+1. Frame 782 — `func_001CF450` → `func_0019A7F0` requests mode 1
+2. `func_0037BCA0` constructs the state; `func_003711E4` clears the render gate
+   at `0x104D320A`
+3. `func_00370B10` reads that byte; `func_0037A79C` skips its render call
+4. Nothing sets it back, because the state never finishes coming up
+5. `movie/vf5adv_2ch_2.sfd` is never opened
+
+That is the end of what can be established without implementing Sofdec/ADXM
+playback — an SPU video-decode subsystem, and the one remaining thing between
+this port and attract mode.
 
 ### The command buffer was never why it stops
 
