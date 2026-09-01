@@ -64,3 +64,8 @@ shot*.png
 
 # live-engine runtime scratch (present timing csv)
 scratch/
+
+# frame dumps (LD_FRAME_DUMP) and window captures
+shots/
+shot_*.png
+*.ppm
