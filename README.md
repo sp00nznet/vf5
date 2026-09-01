@@ -224,6 +224,27 @@ waiting for the first title that sets one. VF5 presents entirely through RESC
 registered, and invokes handlers through `ps3_invoke_guest`. The log confirms
 `cellRescInit` is never reached yet — the title is still stuck behind (3).
 
+### What the SPU interpreter ruled out
+
+`RD_SPU_INTERP=1` makes the raw thread-group path interpret an image instead of
+instant-completing it, so the CriSr thread can be made to run today without the
+registry fix. Worth knowing what that buys:
+
+| | baseline | `RD_SPU_INTERP` | `+ RD_SPU_INTERP_ASYNC` |
+|---|---|---|---|
+| files opened | 19 | **1** | 19 |
+| guest clears | 819 | 0 | 819 |
+| draw packets | 0 | 0 | 0 |
+| `cellRescInit` reached | no | no | no |
+
+Synchronously it is worse than useless — CriSr is a persistent service loop, so
+`group_start` never returns and the boot stops after one file. Asynchronously it
+is a wash: identical to baseline on every counter. So **"the SPU thread never
+runs" is not by itself what is holding the title**, even though it is a genuine
+gap worth closing. Something else in the load path is still waiting on
+something, and the next session should find out what before spending more time
+on the FIFO.
+
 ### Diagnostics added while chasing this
 
 Both in `ps3recomp/libs/video/cellGcmSys.c`, both off by default:
