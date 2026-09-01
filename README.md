@@ -397,58 +397,40 @@ without ever opening `vf5adv_2ch_2.sfd`. Its CRI ADXM (Sofdec) threads are up
 (`cri_adxm_vv_proc` / `_vsync_proc` / `_fs_proc` / `_idle_proc`) and the live
 engine's `movie=` counter never leaves zero.
 
+### The gate is the SPU Delegate, located exactly
+
+`GCM_FLIP_BT=<n>` (new) dumps the flipping thread's guest stack for flips
+n-5..n+5, and the flip counter now prints every 10 rather than every 100 —
+"it stopped somewhere in this hundred" is not an answer. That found the
+transition in one run.
+
+The title accelerates to **58 fps** and stops dead at **flip 782**, and the very
+next lines in the log are:
+
+```
+[SPU] thread_init group=0x1001 index=1 -> tid=0x2002
+[SPU] group_start id=0x1001 (2 host threads running, 0 instant)
+[spurs-job] img=1 returned to the job manager (branch to LS 0) -- job complete
+```
+
+The **"SPU Delegate"** group starts immediately after the last flip, its threads
+report complete without running anything real — they branch to local store 0,
+which the runtime reads as "job finished" — and the title stops rendering,
+because from that point it expects the SPU to produce the work.
+
+`SPU_INTERP_UNLIFTED=1` confirms it. With the delegate actually executing,
+"job complete" drops from many to one and **the title keeps flipping** — past
+flip 780 and on, where the baseline is dead at 38 s. It still holds on the
+CRIWARE logo, but it is no longer stopped.
+
+So the remaining work is a known technique, not a mystery: the delegate branches
+into a module the title relocates into local store at run time, which no static
+lift can cover. Capture it the way Simpsons Arcade's job binaries were captured
+(`SPU_DUMP_MISS`), lift it, and register it — then the delegate runs at native
+speed instead of under the interpreter, and the boot sequence can proceed at
+full rate.
+
 ### The command buffer was never why it stops
-
-`cellGcmSetDefaultCommandBuffer` is supposed to re-point
-`gCellGcmCurrentContext` at the default context `cellGcmInit` built. Ours zeroed
-a host-side struct and did nothing to the guest — so a title that calls it to go
-back to the big default buffer stayed on whatever smaller segment it had
-switched to, and then overflowed it. VF5 calls it **634 times**.
-
-`GCM_DEFAULT_CTX_REPOINT=1` (new) does the real thing. Result:
-
-| | before | after |
-|---|---|---|
-| `[AMGL]:[ERROR] Command Buffer Overflow!` | 88,000 (61 after the TTY dedupe) | **0** |
-| files loaded | 134 | 134 |
-| guest flips before it stops | ~700 | **~700** |
-
-**With the overflow completely gone, the title still stops at the same flip.**
-That is the useful result: the command buffer was never why it stops, and it
-retires the whole ring/AMGL line that several rounds here had been chasing.
-
-For the record, the reserve contract, read off `func_00596754`:
-
-```
-00596784:  bgt   cr7, 0x5967BC    ; no room -> call ctx->callback
-005967D0:  bctrl
-005967DC:  bne   cr7, <return>    ; NON-ZERO: give up
-005967E0:  lwz   r10, 0x8(r31)    ; ZERO: reload current...
-005967E4:  b     0x596788         ; ...and write anyway, skipping the check
-```
-
-"Callback returns 0 = I made room, retry" — and AMGL's only printed and returned
-0, so every failed reserve was one message and one write past `end`. Real, and
-now moot.
-
-### What the stall is not — the full list
-
-Everything below was tried and **none of it changes where VF5 stops**:
-
-| Attempt | Result |
-|---|---|
-| `GCM_DEFAULT_CTX_REPOINT=1` — overflow eliminated entirely | same stall |
-| `SPU_INTERP_UNLIFTED=1` — delegate threads run properly instead of instantly completing | same stall |
-| lv2 187/188 implemented (`set_spu_cfg` / `get_spu_cfg`) | same stall |
-| Ring recycle: drained-FIFO → consumed-head → forced-after-overrun | same stall |
-| TTY dedupe — 88,000 log lines to 56, 30% faster boot | same stall |
-| `PPU_KEEP_EA` holding the OPD table | removes the FATAL abort; same stall |
-| 600-second run | frames stop at the same count |
-
-What is left: the title renders correctly for ~700 guest flips (35–60 s), then
-its render loop stops while the main thread carries on making HLE calls. No
-error, no unresolved import, no failed file open, no overflow. It simply stops
-submitting.
 
 ### The root cause was one bogus function boundary
 
