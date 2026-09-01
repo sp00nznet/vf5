@@ -489,61 +489,36 @@ small enough to read whole:
 obj->0x58 = 1` — a "request mode 1" on a global. So frame 782 is where the title
 *asks for the next state*.
 
-### And this is what it does instead of rendering
+### And what it does instead of rendering: keeps running
 
-Dumping the same ring long after the transition (`HLE_BT_EVERY` now dumps it
-too) gives the answer outright. Thread 1's last 512 indirect calls are:
+This took three wrong readings to get right, so here is the corrected version.
 
-```
-0050B8BC 0050B428 0050B8BC 0050B428 0050B8BC 0050B428 ... (all 512)
-```
-
-**Two functions, alternating, forever** — and every one of the title's own
-functions (`0x17E38` main, `0x12620`, `0x220E4`, …) has stopped being called.
-Both are CRI's, in the same 0x50Bxxx neighbourhood as the CRI worker body:
-
-* `func_0050B428` — takes a lock (`0x50B2B0`), tests a global at `r2+0x42F8`
-  against 1, releases (`0x50B320`)
-* `func_0050B8BC` — tests a global at `r2+0x426C`'s `+0x14` against 1, calls
-  `0x50B4C4`
-
-A lock / test / unlock poll. **After requesting the next state, the main thread
-polls a CRI condition that never becomes true.**
-
-Resolving what those two globals actually are (TOC is `0x006BB088`):
+The HLE stack sampler was printing `tid&7`, and that collides — threads 1, 9 and
+17 all land on slot 1. A stack I attributed to the main thread spinning in CRI
+was a *CRI worker's*. With the real id printed:
 
 ```
-func_0050B428  polls  [0x1070AA94]        == 1
-func_0050B8BC  polls  [0x1070ADA8 + 0x14] == 1   ->  [0x1070ADBC]
+GSTACK:hle#1350000 tid=1 ... func_003739C4+0xC0  func_00339774+0x228
+                            func_0037AD48+0x16C  func_0037AF20
 ```
 
-Both live in CRI's object area — `0x1070ACD8` and `0x1070AD40` are the CRI
-server-thread objects `func_005108C4` runs on. And watching both addresses for
-the whole run:
+**The main thread is still running its own per-frame driver at HLE call
+1,350,000.** It is not stuck, not deadlocked, not spinning in CRI. It runs the
+frame loop and simply stops calling `cellGcmSetFlip`.
 
-**Nothing ever writes either flag. Zero writes, 150 seconds.**
+Two other readings corrected along the way:
 
-**Correction:** holding both flags at 1 (`PPU_POKE`, new) changes nothing —
-same flip 780, same 134 files. Re-reading the disassembly says why: in both
-functions the `cmpwi r0, 1; beq` skips an *unlock call inside a lock/unlock
-pair*. They are recursion/ownership checks, not the loop's exit condition. The
-loop lives in a caller whose own body is direct calls, which is exactly why the
-indirect-call ring only ever shows those two functions.
+* `func_001F5860` is not "the flip" — the two stack offsets I read as different
+  branches (+0xC0 and +0xDC) are just the return addresses of two adjacent calls
+  inside it, and it looks like an allocator.
+* The globals the CRI lock pair tests are recursion/ownership checks, not a wait
+  condition; `PPU_POKE` holding them at 1 changes nothing.
 
-So the chain is:
-
-1. Frame 782 — the title requests the next state (`func_001CF450` →
-   `func_0019A7F0`, `mode = 1`).
-2. The main thread drops into CRI's lock / test / unlock poll.
-3. That poll runs forever. Which condition ends it is **not** established — the
-   two globals it tests are lock bookkeeping, and forcing them changes nothing.
-4. It never opens `movie/vf5adv_2ch_2.sfd`, and never renders again.
-
-That closes the loop on the earlier finding, and earns it: attract mode is a
-Sofdec video, the title asks CRI to start it, CRI never marks itself ready
-because its SPU-side renderer never produces, and the main thread waits on flags
-nothing sets. The gap is **Sofdec/ADXM playback** — a video-decode subsystem on
-SPU — and that is now a mechanism rather than an inference from a filename.
+So the state is: **the frame loop runs, and the render/flip step inside it stops
+happening.** Why is inside the title's own per-frame logic
+(`func_0037AF20` → `func_0037A79C` → `func_00370A10`), and nothing in the
+runtime — no error, no unresolved import, no failed open, no overflow — is
+implicated any more.
 
 ### The command buffer was never why it stops
 
