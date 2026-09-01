@@ -70,7 +70,7 @@ is a real test of the engine rather than a UI composite.
 | PPU lifting | **done** — 18,514 functions emitted, 7,855 unique call targets, 105 MB of C++ |
 | HLE NID table | **done** — 1,040 handlers across 88 modules |
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
-| Boot | **reaches the render loop** — see below |
+| Boot | **reaches the render loop, clears the screen** — no geometry yet, see below |
 
 ### The binary
 
@@ -126,25 +126,78 @@ nineteen of the game's own file-reader threads, and its real asset databases
 opening off the disc. Then it parks in a 60 Hz `event_queue_receive(q=3,
 timeout=16666)` and draws nothing — `groups[seen=0 exec=0]`.
 
-### The three things in the way
+### Where it stopped, and what moved it
 
-1. **`sys_spinlock_initialize` / `_trylock` / `_unlock` are unimplemented.**
-   `0x8C2BB498` / `0x722A0254` / `0x5267CB35` — the only unresolved NIDs in the
-   whole boot (40 calls). They are not in ps3recomp's NID database under any
-   name; recovered here by brute-forcing `compute_nid()` over a candidate list
-   of `sysPrxForUser` exports. This is a shared-runtime gap, not a VF5 one.
-2. **The title's own graphics layer reports `[AMGL]:[ERROR] Command Buffer
-   Overflow!`** — repeatedly, and that string is *the game's*, not ours. AM2's
-   GCM wrapper is filling its command ring and never seeing it drain. Same class
-   as the ring-wrap wedge that gated YDKJ's first draws before the real
-   command-buffer-full callback landed.
-3. **The SPU thread group starts with an unpopulated `CellSpurs` struct**
-   (`0xCDCDCDCD` throughout) and `[SPU] group_start id=0x1000 (1 thread(s),
-   none spawned: 0 ran synchronously, 1 had no fallback)` — the image the title
-   hands the group is not matching one of the four registered fingerprints.
+**1. `sys_spinlock_*` was unimplemented — fixed.** `0x8C2BB498` / `0x722A0254` /
+`0x5267CB35` were the only unresolved NIDs in the whole boot (40 calls) and were
+unnamed in ps3recomp's database. Brute-forcing `compute_nid()` over the
+`sysPrxForUser` export list identified them as `sys_spinlock_initialize` /
+`_trylock` / `_unlock`. Implemented in `ppu_sysprx.cpp` as a test-and-set on the
+guest word (which is all a `sys_spinlock_t` is), all four registered including
+`sys_spinlock_lock`, and the names added to `nid_database.py`. Unresolved NIDs
+for the family: **40 -> 0**.
 
-(1) is small and title-agnostic; (2) is the one that stands between this title
-and geometry.
+**2. The title's own graphics layer prints `[AMGL]:[ERROR] Command Buffer
+Overflow!`** — that string is *the game's*, not ours. This is the live frontier.
+What the FIFO trace says:
+
+```
+[DRAIN] getoff=0042F168 put=00AE8A84 ref=00000000 ctx.current=4A400418
+```
+
+* `_cellGcmInitBody` puts the default command buffer at IO `0..0x6FF000`
+  (`ioAddr` 0x4A400000). The title then `cellGcmMapMainMemory`s a second 4 MB at
+  0x4AB00000, which lands at IO `0x700000..0xB00000`, and drives the RSX from
+  the *last* megabyte of it — every `put` it writes is `0xA00000 + n`.
+* `get` meanwhile circulates inside the default ring at IO 0, following JUMPs
+  libgcm parked there. It burns its entire million-word budget without arriving.
+  Twisted Metal and flOw both write one ring whose JUMPs lead to `put`; VF5 does
+  not, and nothing in the walker noticed — the existing stuck-detector only
+  fires when `get` stops *moving*, and a walker going in circles moves plenty.
+* Because `get` never advances into the title's ring, the ring is never
+  reclaimed, AMGL's buffer-full callback can never free space, and `put` runs
+  off the end of its own mapping — which is the `cellGcmAddressToOffset failed
+  for 0x4AF000B0` flood (0x4AF00000 is exactly one past the 4 MB).
+
+Two rules added to the shared FIFO walker, both no-ops for a title that keeps
+up: stop honouring one-flip-per-drain once the backlog exceeds 64 KB, and treat
+a full-budget burn on several consecutive passes as "circling" and follow the
+write head (`GCM_FIFO_CIRCLE_PASSES`, default 4). Measured effect:
+
+| | before | after |
+|---|---|---|
+| `Command Buffer Overflow` in 45 s | 78,601 | 40,297 |
+| `AddressToOffset failed` | thousands | 91 |
+| guest clears reaching the engine | 342 | 819 |
+
+Real movement, not a fix. **`packets[seen=0] groups[seen=0]` — still not one
+draw**, no `SET_OBJECT` is ever decoded, and `ctrl->ref` stays `0x00000000` for
+the entire run, which is the tell: if AMGL sizes its free space off the
+reference value, nothing we do to `get` alone will ever unblock it. The walker
+is still not on the title's real command stream.
+
+The honest next step is not another walker heuristic. It is modelling which
+buffer the RSX is actually bound to — the title calls `cellGcmSetQueueHandler`
+(`0x006A8038`) and `cellGcmSetDefaultCommandBuffer`, and our implementation of
+the latter zeroes a *host* struct and ignores the switch entirely.
+
+**3. The SPU thread group starts on an unpopulated `CellSpurs` struct**
+(`0xCDCDCDCD` throughout) and `[SPU] group_start id=0x1000 (1 thread(s), none
+spawned: 0 ran synchronously, 1 had no fallback)` — the image the title hands
+the group matches none of the four registered fingerprints. Untouched so far;
+(2) is the one between this title and geometry.
+
+### Diagnostics added while chasing this
+
+Both in `ps3recomp/libs/video/cellGcmSys.c`, both off by default:
+
+* `GCM_FIFO_SNAP=N` — dumps the raw words at *both* ends of the ring, what
+  `get` is about to decode and what the title just wrote at `put`. This is what
+  showed the two ends were in different buffers.
+* `GCM_DRAINDBG=1` now also prints `[DRAINEND] <reason>` — why each pass
+  stopped and how far it got. Every break site is tagged. A pass that ends far
+  short of `put` every tick is the signature of a FIFO that can never catch up,
+  and the reason is the whole diagnosis.
 
 ## Building
 
