@@ -397,41 +397,58 @@ without ever opening `vf5adv_2ch_2.sfd`. Its CRI ADXM (Sofdec) threads are up
 (`cri_adxm_vv_proc` / `_vsync_proc` / `_fs_proc` / `_idle_proc`) and the live
 engine's `movie=` counter never leaves zero.
 
-### The reserve contract, read off the disassembly
+### The command buffer was never why it stops
 
-All three `gcmReserve` variants have the same failure path — this is
-`func_00596754`, the one the error printer's call chain actually names:
+`cellGcmSetDefaultCommandBuffer` is supposed to re-point
+`gCellGcmCurrentContext` at the default context `cellGcmInit` built. Ours zeroed
+a host-side struct and did nothing to the guest — so a title that calls it to go
+back to the big default buffer stayed on whatever smaller segment it had
+switched to, and then overflowed it. VF5 calls it **634 times**.
+
+`GCM_DEFAULT_CTX_REPOINT=1` (new) does the real thing. Result:
+
+| | before | after |
+|---|---|---|
+| `[AMGL]:[ERROR] Command Buffer Overflow!` | 88,000 (61 after the TTY dedupe) | **0** |
+| files loaded | 134 | 134 |
+| guest flips before it stops | ~700 | **~700** |
+
+**With the overflow completely gone, the title still stops at the same flip.**
+That is the useful result: the command buffer was never why it stops, and it
+retires the whole ring/AMGL line that several rounds here had been chasing.
+
+For the record, the reserve contract, read off `func_00596754`:
 
 ```
-00596780:  cmplw cr7, r9, r0      ; current+8 vs end
-00596784:  bgt   cr7, 0x5967BC    ; no room -> call the callback
-...
-005967BC:  lwz   r9, 0xC(r3)      ; ctx->callback OPD
+00596784:  bgt   cr7, 0x5967BC    ; no room -> call ctx->callback
 005967D0:  bctrl
-005967D8:  cmpdi cr7, r3, 0
 005967DC:  bne   cr7, <return>    ; NON-ZERO: give up
 005967E0:  lwz   r10, 0x8(r31)    ; ZERO: reload current...
 005967E4:  b     0x596788         ; ...and write anyway, skipping the check
 ```
 
-So **the contract is "callback returns 0 = I made room, retry"**, and AMGL's
-callback (`func_0048BB70`) only prints `[AMGL]:[ERROR] Command Buffer Overflow!`
-and returns 0. Each failed reserve is therefore one message and **one write past
-`end`** — into whatever follows the segment. Not a spin inside reserve: a slow
-corruption of whatever lives after the current command segment, once per
-command, for as long as the title keeps rendering.
+"Callback returns 0 = I made room, retry" — and AMGL's only printed and returned
+0, so every failed reserve was one message and one write past `end`. Real, and
+now moot.
 
-That fits the shape of the failure better than anything else here: VF5 renders
-correctly for ~700 flips and then stops, rather than failing immediately.
+### What the stall is not — the full list
 
-It also means the runtime is wrong somewhere *upstream*: on hardware this path
-is never taken, because AMGL's own code guarantees a segment never fills — it
-allocates a new one first. Something we report or fail to do makes a segment
-fill that shouldn't. `cellGcmSetDefaultCommandBuffer` is the prime suspect: VF5
-imports it, and our implementation zeroes a host-side struct and does not touch
-the title's `gCellGcmCurrentContext` at all.
+Everything below was tried and **none of it changes where VF5 stops**:
 
-### Correcting the ring reading
+| Attempt | Result |
+|---|---|
+| `GCM_DEFAULT_CTX_REPOINT=1` — overflow eliminated entirely | same stall |
+| `SPU_INTERP_UNLIFTED=1` — delegate threads run properly instead of instantly completing | same stall |
+| lv2 187/188 implemented (`set_spu_cfg` / `get_spu_cfg`) | same stall |
+| Ring recycle: drained-FIFO → consumed-head → forced-after-overrun | same stall |
+| TTY dedupe — 88,000 log lines to 56, 30% faster boot | same stall |
+| `PPU_KEEP_EA` holding the OPD table | removes the FATAL abort; same stall |
+| 600-second run | frames stop at the same count |
+
+What is left: the title renders correctly for ~700 guest flips (35–60 s), then
+its render loop stops while the main thread carries on making HLE calls. No
+error, no unresolved import, no failed file open, no overflow. It simply stops
+submitting.
 
 ### The root cause was one bogus function boundary
 
