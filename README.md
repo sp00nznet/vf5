@@ -358,16 +358,51 @@ an allocator bug (the `_sys_heap_*` free list below was rewritten first) does
 not help: the address is byte-identical across runs and the allocator makes
 exactly **two** allocations in the whole run.
 
-The next step is naming the store. `YDKJ_AWATCH8` only sees `vm_write8`, so a
-bulk or vector store is invisible to it; the page-guard watchpoint
-(`ppu_guard_page`) is the tool, but it currently arms only after a *lifted*
-store to the watched word, which by definition this is not. Arming it directly
-on `0x006ADE30` at boot is a small change and would name the writer in one run.
+**The store is named.** `PPU_GUARD_EA=006ADE30` page-guards the address at boot
+and reports every write with a host backtrace mapped back through `/MAP`:
 
-While in the area, `_sys_heap_*` did get a real allocator: size-binned free
-lists instead of a bump pointer with a no-op free, so a title whose middleware
-allocates and frees continuously reuses memory instead of walking the window.
-Correct, and not what was wrong here.
+```
+[GUARD] WRITE guest=0x006ADE33 from RIP rva=0xA5AE
+[GCS] func_00050B60+0x854  func_0005163C+0x1ED9  func_000301F4+0x772
+      func_0002F2D4+0x559  func_000303D4+0x20E   func_00052AAC+0x1EE
+      func_00110464+0x3365 func_003737FC+0xECB   func_003739C4+0xC5D
+      func_0037AD48+0x1F40 func_0037AF20+0x35A   func_00017E38+0x2F7 ... main
+[GUARD]   live ctx r3=0x404B647F r4=0x404B6480 r5=0x404B647B r6=0xFFFFFFFF
+```
+
+1,025 writes, the whole 4 KB page `0x006AD000`–`0x006ADFFF`, one per word, all
+from the same site. And `func_00050B60` disassembles to exactly what the
+corruption looks like:
+
+```
+00050B60:  lwz    r9, 0x4(r3)          ; load two adjacent words
+00050B64:  lwz    r8, 0x0(r3)
+00050B68:  rlwinm r11, r9, 24, 16, 23  ; ...byte-swap both
+00050B6C:  rlwinm r0,  r9,  8, 24, 31
+           ...
+00050BA0:  stw    r0, 0x4(r3)          ; ...store them back IN PLACE
+00050BAC:  stw    r9, 0x0(r3)
+00050BB0:  beq    cr7, 0x50BBC
+00050BB4:  add    r0, r0, r4           ; ...and relocate: value += base
+00050BB8:  stw    r0, 0x4(r3)
+```
+
+**It is an endian-fixup-and-relocate pass over a table of `{value, base}`
+pairs**, run in place. Which is why the damage is a permutation of the original
+rather than junk, and why `ror64(bswap64(x), 16)` describes it so exactly.
+
+That pass has no business running over `0x006AD000`. Its own live registers say
+where it thinks it is — `r3=0x404B647F`, `r4=0x404B6480`, `r5=0x404B647B`, all
+in the *heap* region and all misaligned by 3 — while the writes land in the data
+segment. Note `r6=0xFFFFFFFF`, which for a count register is the shape of a
+runaway loop.
+
+So: a fixup pass meant for a freshly loaded buffer is walking the title's own
+static data instead, byte-swapping and relocating a live OPD table into
+nonsense, and CRI's worker then spins forever on the descriptor it produced.
+Whether the wrong pointer is a lifter bug in the address arithmetic or a real
+count that our runtime made bogus is the open question, and
+`func_0005163C` — the immediate caller, which computes both — is where to look.
 
 ### Thread inventory
 
