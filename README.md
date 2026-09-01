@@ -301,6 +301,27 @@ the old synchronous call stays as the fallback until a pump is observed.)
 142 files loaded, 90 seconds with no abort. Before this the same counters read
 `packets[seen=0] groups[seen=0]` for the entire run.
 
+### What is on screen
+
+![VF5 drawing its own NOW LOADING screen](docs/now_loading.png)
+
+`LD_FRAME_DUMP=<dir>` (new) writes the presented surface to a `.ppm` every N
+flips. It exists because there is no external way to see a D3D12 swapchain here
+-- `PrintWindow` returns white, and so does `CopyFromScreen` when the window is
+not compositing to a capturable desktop -- and the engine's own dumps only fire
+at shutdown or from the parity harness.
+
+The frame is 1280x720 with every pixel non-black, and the text is the game's
+own: **NOW LOADING**, in VF5's font, drawn from the sprite and font archives it
+loads. This is the first picture out of the port.
+
+It is also, plainly, the loading screen. **Attract mode has not been reached** —
+the title renders, but its load does not complete, so it never advances to the
+idle/demo sequence. The background reading white where it should be dark is a
+second thing to chase (a clear colour or blend state), and run-to-run the group
+count varies a lot (742 to 13,874 in otherwise identical runs), which says
+something is still racing.
+
 ### The root cause was one bogus function boundary
 
 Everything traced back to `find_functions` planting a start at `0x00051600`,
