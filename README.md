@@ -252,15 +252,52 @@ Notable: the title never calls `cellFsLseek` despite importing it, and reads
 `voice.afs` in 2048-byte sectors — CRI's file-system shape. `cellRescInit` is
 still never reached, so nothing downstream of the load has started.
 
-### What the SPU interpreter ruled out
+### The SPU registry gap — closed
 
-`RD_SPU_INTERP=1` runs the `CriSr` thread today without wiring the raw
-thread-group path into the fingerprint registry. Re-measured *after* the dialog
-fix (the first measurement was taken at a stall the title had not yet reached,
-and was worthless): synchronously it is worse than useless — CriSr is a
-persistent service loop, so `group_start` never returns and the boot stops after
-one file instead of twenty. Asynchronously it is a wash, identical to baseline
-on every counter. The dormant SPU thread is a real gap; it is not this one.
+Two registries have always existed. `build_spu_workloads.py` registers each
+lifted image by FNV-1a-64 content fingerprint, which is what the `cellSpurs`
+path looks up; `sys_spu_thread_group_start` only ever called
+`spu_lookup_ppu_fallback(entry_point)`, a different table. VF5 imports **no
+`cellSpurs` at all** and drives one plain SPU thread group, so it reported "no
+fallback" with its image lifted and registered the whole time — none of its SPU
+code had ever run. Now:
+
+```
+[SPU] thread tid=0x2000 image @0x100BFB80 (124468 bytes) matched lifted
+      workload fp=0x5E90B27CBCB5CC2E image_id=2
+[SPU] group_start id=0x1000 tid=0x2000 -> spawned host thread
+```
+
+`group_start` only sees the `sys_spu_image` *descriptor* and the registry is
+keyed by the ELF's bytes, so `_sys_spu_image_import` now records which ELF each
+descriptor came from. The image is the one the thread group is named for:
+`CriSr thread group` — CRI's sound renderer, feeding the `_cellsurMixerMain`
+thread. It runs the lifted code and stays alive, as a service loop should.
+
+It did not move the boot on its own, but it is a genuine title-agnostic gap and
+every future title driving raw SPU thread groups needed it closed.
+
+### Thread inventory
+
+Worth writing down, because it renames the whole problem:
+
+| tid | name | state |
+|---|---|---|
+| 1 | main | frame loop, ~63 fps, clears + flips |
+| 3 | `_sys_mixerSurBusReq` | Sony libmixer |
+| 4 | `_cellsurMixerMain` | pumps event queue 1 at ~180/s — healthy |
+| 5 | `cri_dlg` | one `cond_wait(cond=4)`, never signalled again |
+| 6–9 | `cri_adxm_{vv,vsync,fs,idle}_proc` | CRI ADXM workers, waking ~48 Hz |
+| 10+ | `flpt_readnw_thread` | 19 spawned, all ran their read and exited |
+
+So this is Sony's surround mixer plus CRI's ADX movie/audio stack, and the file
+readers are spawned per request. The requests stop after twenty. `cri_dlg`
+sitting idle is very likely *normal* for a title with no dialogue queued — the
+earlier reading of it as "the" stall is not supported.
+
+What is not yet known is which side stopped: the game's load state machine
+waiting on CRI, or CRI waiting on the game. That is the next thing to establish,
+and it wants fresh analysis rather than another probe.
 
 ### Diagnostics added while chasing this
 
@@ -277,7 +314,13 @@ Both in `ps3recomp/libs/video/cellGcmSys.c`, both off by default:
   fix: it removes the back-pressure a title uses to avoid overwriting commands
   the GPU has not read. It answers one question — is the title reading `get`?
 
-And one in `runtime/ppu/ppu_loader.cpp`:
+And elsewhere in the runtime:
+
+* `MSGDIALOG_ANSWER=no` — answer every yes/no prompt NO instead of YES. The
+  auto-answer is a guess about what the title wants and yes is not always the
+  boot-friendliest branch. (For VF5 it changes nothing; the prompt was not the
+  gate — but that took one run to establish rather than a rebuild.)
+
 
 * `TTY_BT=<substring>` — dump the call chain whenever the title prints a line
   containing it. Three hooks in that function and one in `lv2_register.c`
