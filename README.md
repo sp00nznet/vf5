@@ -181,11 +181,48 @@ buffer the RSX is actually bound to — the title calls `cellGcmSetQueueHandler`
 (`0x006A8038`) and `cellGcmSetDefaultCommandBuffer`, and our implementation of
 the latter zeroes a *host* struct and ignores the switch entirely.
 
-**3. The SPU thread group starts on an unpopulated `CellSpurs` struct**
-(`0xCDCDCDCD` throughout) and `[SPU] group_start id=0x1000 (1 thread(s), none
-spawned: 0 ran synchronously, 1 had no fallback)` — the image the title hands
-the group matches none of the four registered fingerprints. Untouched so far;
-(2) is the one between this title and geometry.
+**3. The SPU thread group never runs — and this is very likely the real
+blocker, ahead of (2).** The group is named in the log:
+
+```
+[SPU] group_create -> id=0x1000 num=1 prio=100 type=0x0 name=CriSr thread group
+[HLE] _sys_spu_image_import(img=0x401440F8 src=0x100BFB80) -> entry=0x00090 nsegs=3
+[SPU] thread_init group=0x1000 index=0 img=0x401440F8 -> tid=0x2000 entry=0x00000090
+[SPU] group_start id=0x1000 (1 thread(s), none spawned: 0 ran synchronously,
+                             1 had no fallback)
+```
+
+`CriSr` is CRI middleware — the same family that turned out to be the whole
+story for Simpsons Arcade. `src=0x100BFB80` is an SPU ELF embedded in the
+EBOOT's last PT_LOAD, and it is **one of the four images `relift.sh` already
+extracts, lifts and registers**. It still reports "no fallback".
+
+The cause is two registries where only one is consulted. `build_spu_workloads.py`
+registers each lifted image by FNV-1a-64 content fingerprint
+(`spu_workload_register_img`), which is what the SPURS path looks up. The raw
+`sys_spu_thread_group_start` path in `runtime/syscalls/lv2_register.c` only ever
+calls `spu_lookup_ppu_fallback(entry_point)` — a different table, keyed by entry
+point — so a title that starts a plain SPU thread group gets "no fallback" even
+with its image lifted and registered. VF5 uses the raw path exclusively (it
+imports no `cellSpurs` at all), so **none of its SPU code has ever executed.**
+
+Wiring the raw path to fall back to the fingerprint registry is the next change.
+It is not a one-liner: the run needs the image's indirect-branch table id
+(`spu_begin_image`) so branches resolve in the right image, and a raw SPU thread
+is entered with four 64-bit args rather than the SPURS task ABI
+`spu_lifted_fallback` assumes. Both are knowable; neither is guesswork worth
+shipping unverified.
+
+**Also fixed on the way, though VF5 has not reached it yet:** `cellResc` was a
+pure state-tracking stub — `cellRescSetConvertAndFlip` incremented a counter and
+returned `CELL_OK` without flipping anything, and both handler setters stored a
+guest OPD in a *host* function pointer and called it directly, which is a crash
+waiting for the first title that sets one. VF5 presents entirely through RESC
+(11 imports: `SetSrc`, `SetDsts`, `SetConvertAndFlip`, `SetFlipHandler`,
+`GcmSurface2RescSrc`), so this had to be real. It now issues a real
+`cellGcmSetFlipCommand`, rotating through the display buffers the title
+registered, and invokes handlers through `ps3_invoke_guest`. The log confirms
+`cellRescInit` is never reached yet — the title is still stuck behind (3).
 
 ### Diagnostics added while chasing this
 
