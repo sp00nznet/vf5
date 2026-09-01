@@ -70,7 +70,9 @@ is a real test of the engine rather than a UI composite.
 | PPU lifting | **done** — 18,514 functions emitted, 7,855 unique call targets, 105 MB of C++ |
 | HLE NID table | **done** — 1,040 handlers across 88 modules |
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
-| Boot | **renders** — 13,874 draw groups executed, 0 dropped, 72,652 real texture binds, 142 files loaded |
+| Boot | **renders** — 13,874 draw groups executed, 0 dropped, 72,652 real texture binds, 134 files loaded, zero unresolved imports |
+| On screen | **its own NOW LOADING and CRIWARE screens**, 58 fps — see below |
+| Attract mode | **not reached** — needs CRI Sofdec video decode; the stop is traced and confirmed by intervention |
 
 ### The binary
 
