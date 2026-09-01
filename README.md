@@ -523,13 +523,21 @@ the whole run:
 
 **Nothing ever writes either flag. Zero writes, 150 seconds.**
 
-So the chain is complete:
+**Correction:** holding both flags at 1 (`PPU_POKE`, new) changes nothing —
+same flip 780, same 134 files. Re-reading the disassembly says why: in both
+functions the `cmpwi r0, 1; beq` skips an *unlock call inside a lock/unlock
+pair*. They are recursion/ownership checks, not the loop's exit condition. The
+loop lives in a caller whose own body is direct calls, which is exactly why the
+indirect-call ring only ever shows those two functions.
+
+So the chain is:
 
 1. Frame 782 — the title requests the next state (`func_001CF450` →
    `func_0019A7F0`, `mode = 1`).
 2. The main thread drops into CRI's lock / test / unlock poll.
-3. The two flags it polls are never written by anything.
-4. It polls forever, never opens `movie/vf5adv_2ch_2.sfd`, never renders again.
+3. That poll runs forever. Which condition ends it is **not** established — the
+   two globals it tests are lock bookkeeping, and forcing them changes nothing.
+4. It never opens `movie/vf5adv_2ch_2.sfd`, and never renders again.
 
 That closes the loop on the earlier finding, and earns it: attract mode is a
 Sofdec video, the title asks CRI to start it, CRI never marks itself ready
