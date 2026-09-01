@@ -418,17 +418,15 @@ report complete without running anything real — they branch to local store 0,
 which the runtime reads as "job finished" — and the title stops rendering,
 because from that point it expects the SPU to produce the work.
 
-`SPU_INTERP_UNLIFTED=1` confirms it. With the delegate actually executing,
-"job complete" drops from many to one and **the title keeps flipping** — past
-flip 780 and on, where the baseline is dead at 38 s. It still holds on the
-CRIWARE logo, but it is no longer stopped.
+`SPU_INTERP_UNLIFTED=1` makes the delegate threads actually execute — "job
+complete" drops from many to one — and **it does not help**. Guest flips stop at
+780 with it on, at 49 s, exactly as without it. A first, slower run reached only
+flip 341 in 216 s and looked like it was still going; it had simply not got to
+the stop point yet, and reading that as "it keeps flipping" was wrong.
 
-So the remaining work is a known technique, not a mystery: the delegate branches
-into a module the title relocates into local store at run time, which no static
-lift can cover. Capture it the way Simpsons Arcade's job binaries were captured
-(`SPU_DUMP_MISS`), lift it, and register it — then the delegate runs at native
-speed instead of under the interpreter, and the boot sequence can proceed at
-full rate.
+So the delegate starting is *when* the title stops, and making the delegate run
+under the interpreter does not change that. Whether the delegate is the cause or
+just the last thing that happens first is not established.
 
 ### The command buffer was never why it stops
 
