@@ -277,27 +277,92 @@ thread. It runs the lifted code and stays alive, as a service loop should.
 It did not move the boot on its own, but it is a genuine title-agnostic gap and
 every future title driving raw SPU thread groups needed it closed.
 
+### The dialog answer was arriving too early
+
+The biggest single unlock of the session, and it had nothing to do with
+graphics. `cellMsgDialogOpen2` invoked the guest callback **synchronously, from
+inside the open call, before it returned**. Hardware does not: the answer
+arrives later, from the title's own `cellSysutilCheckCallback`. The difference
+is not cosmetic —
+
+```
+state = WAITING;
+cellMsgDialogOpen(..., cb, &state);   // our cb sets state = DONE, right here
+state = WAITING;                      // ...and the title overwrites it
+```
+
+— and a title that arms its wait state *after* the call loses the answer and
+waits forever. That is exactly what VF5 does, and it is why it sat on a black
+screen with its render state fully configured and nothing to draw.
+
+Deferred to the pump, in the same 55 seconds:
+
+| | before | after |
+|---|---|---|
+| files opened | 20 | **123** |
+
+and what it opens is the front end: the `vf5ps3_j*.adx` music set, both voice
+banks, `spr_c_cmn`/`spr_n_cmn` sprite archives, `spr_c_fnt`/`spr_c_fnt24` fonts,
+**`shader_cg_88.farc`**, and `aet_c_cmn.bin` / `aet_n_cmn.bin` — the UI
+animation data the attract screens are built from.
+
+(A title that never pumps sysutil would never see a deferred answer at all, so
+the old synchronous call stays as the fallback until a pump is observed.)
+
+### The current blocker
+
+The run now ends in a named abort rather than an idle spin:
+
+```
+[ppu] FATAL: stuck calling 0x500088B0 (2000 times) -- aborting run
+[ppu]   tid=7 lr=0x00510980 r3=0x1070ACD8 r31=0x1070ACD8
+[GSTACK:stuck-caller] cia=0x006AE470  func_005108C4+0xBC
+      ARG[0x40003450] vtbl=0x68C87F3F -> method code=0x0 toc=0x0
+```
+
+`tid 7` is `cri_adxm_vsync_proc` and `func_005108C4` is the CRI worker body. It
+calls through a pointer into `0x500088B0` — inside the `_sys_heap_*` window at
+`0x50000000` — and the object it reads has a garbage vtable. A related
+`bctr to NULL from func_005872FC` fires on the mixer thread with `r3=0x50000000`.
+
+Both point at the same suspect: the `_sys_heap_*` family registered earlier this
+session is backed by a bump allocator in a private guest window
+(`YZ_HEAP_BASE 0x50000000`) that ignores the heap id and never frees. That was
+enough to get past the out-of-memory path that opened the dialog; it is not
+enough for CRI, which allocates and frees working buffers continuously. Routing
+those allocations through the same memory the title itself allocated — rather
+than a side window nothing else knows about — is the next step.
+
 ### Thread inventory
 
-Worth writing down, because it renames the whole problem:
+Worth writing down, because it renames the problem:
 
 | tid | name | state |
 |---|---|---|
-| 1 | main | frame loop, ~63 fps, clears + flips |
+| 1 | main | frame loop, clears + flips |
 | 3 | `_sys_mixerSurBusReq` | Sony libmixer |
-| 4 | `_cellsurMixerMain` | pumps event queue 1 at ~180/s — healthy |
-| 5 | `cri_dlg` | one `cond_wait(cond=4)`, never signalled again |
-| 6–9 | `cri_adxm_{vv,vsync,fs,idle}_proc` | CRI ADXM workers, waking ~48 Hz |
-| 10+ | `flpt_readnw_thread` | 19 spawned, all ran their read and exited |
+| 4 | `_cellsurMixerMain` | pumps event queue 1 — healthy |
+| 5 | `cri_dlg` | idle on cond 4 (normal with no dialogue queued) |
+| 6–9 | `cri_adxm_{vv,vsync,fs,idle}_proc` | CRI ADXM workers; **tid 7 is the one that aborts** |
+| 10+ | `flpt_readnw_thread` | spawned per read request |
 
-So this is Sony's surround mixer plus CRI's ADX movie/audio stack, and the file
-readers are spawned per request. The requests stop after twenty. `cri_dlg`
-sitting idle is very likely *normal* for a title with no dialogue queued — the
-earlier reading of it as "the" stall is not supported.
+Sony's surround mixer plus CRI's ADX movie/audio stack, with file readers
+spawned per request.
 
-What is not yet known is which side stopped: the game's load state machine
-waiting on CRI, or CRI waiting on the game. That is the next thing to establish,
-and it wants fresh analysis rather than another probe.
+### The render state is fully configured — there are simply no draws
+
+`YDKJ_RSXTRACE` over 200,000 methods of the title's own stream: surfaces
+(`0x0200`–`0x022C`), viewport (`0x0A20`–`0x0A3C`), vertex attribute offsets
+(`0x1680`–`0x16BC`) and formats (`0x1740`–`0x177C`), texture units
+(`0x1A00`+, `0x1B20`–`0x1BB4`), vertex program upload (`0x1EFC`–`0x1F0C`,
+11,222 of each), polygon/cull state (`0x1828`–`0x1840`).
+
+The sorted method list jumps straight from `0x177C` to `0x1828`: **the entire
+`0x1800`–`0x1824` draw block — `SET_BEGIN_END`, `DRAW_ARRAYS`,
+`DRAW_INDEX_ARRAY`, `INLINE_ARRAY` — is absent.** Everything is bound and
+nothing is drawn, which is a game-state problem, not a renderer one. The FIFO
+walker is demonstrably on the title's own ring by then
+(`getoff=00A550A0 put=00A550A0`), so this is what the title actually submits.
 
 ### Diagnostics added while chasing this
 
