@@ -1,0 +1,66 @@
+# ── Copyrighted game data (BYO legal copy) ──────────────────────────────
+*.rar
+*.pkg
+*.PKG
+pkg/
+extracted/
+game/
+*.SR
+*.sr
+*.EDAT
+*.edat
+*.TRP
+*.self
+*.elf
+*.BIN
+EBOOT*
+
+# ── Generated recompilation output ──────────────────────────────────────
+src/recomp/
+*.gen.cpp
+*.gen.h
+
+# ── Build artifacts ─────────────────────────────────────────────────────
+build/
+out/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.dll
+
+# ── Analysis dumps (large, regenerable) ─────────────────────────────────
+*.log
+analysis.json
+elf_analysis.json
+combined_functions*.json
+opd_functions.json
+*_functions.json
+
+# ── Editor / OS cruft ───────────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+Thumbs.db
+.DS_Store
+
+# ── Rebuilt-on-shared-harness generated output ──────────────────────────
+# gen_hle_nids.py output
+src/gen/
+# find_functions.py output
+analysis/
+# game data VFS root (your own dump)
+vfs/
+# Lifted SPU images + the extractor's output. Both are derived from the game
+# binary -- regenerate with tools/relift.sh from your own dump.
+src/spu_gen/
+src/spu_workloads.c
+analysis/spu_images/
+shot*.png
+
+# live-engine runtime scratch (present timing csv)
+scratch/

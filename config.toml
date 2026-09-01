@@ -1,0 +1,54 @@
+# Virtua Fighter 5 (BLUS30020) — ps3recomp configuration
+#
+# The whole import set, parsed from the EBOOT's sys_proc_prx_param lib.stub
+# tables: 107 functions across 10 libraries (see imports.json). That is the
+# entire OS surface — there is no online module, no cellSpurs, no cellSail,
+# no cellFont. Every one of the ten is a ps3recomp HLE module today.
+
+[input]
+elf_path = "game/EBOOT.elf"       # decrypted from PS3_GAME/USRDIR/EBOOT.BIN
+sfo_path = "vfs/PS3_GAME/PARAM.SFO"
+
+[output]
+output_dir = "src/recomp/"
+func_prefix = "recomp_"
+generate_func_table = true
+
+[modules]
+cellSysutil    = "hle"   # 23 — video out, system params, sysutil callbacks
+sysPrxForUser  = "hle"   # 22 — TLS, lwmutex, threads, process exit
+cellGcmSys     = "hle"   # 19 — RSX command buffer + flips
+cellAudio      = "hle"   # 11 — PCM out
+cellResc       = "hle"   # 11 — resolution converter (VF5 renders 1280x720 -> scaler)
+cellSync       = "hle"   #  5 — the only SPU-adjacent module; no cellSpurs at all
+sys_fs         = "hle"   #  8 — disc I/O
+sys_io         = "hle"   #  4 — cellPad
+cellRtc        = "hle"   #  3 — clock
+cellSysmodule  = "hle"   #  1 — module load/unload
+
+[memory]
+main_ram_mb = 256
+vram_mb = 256
+thread_stack_kb = 1024
+
+[threading]
+max_ppu_threads = 64
+max_spu_threads = 6
+use_host_threads = true
+
+[graphics]
+backend = "d3d12"
+width = 1280
+height = 720
+vsync = "on"
+scale_factor = 1
+
+[audio]
+backend = "wasapi"
+sample_rate = 48000
+buffer_size = 512
+
+[debug]
+log_hle_calls = true
+log_missing_nids = true
+break_on_unimplemented = false

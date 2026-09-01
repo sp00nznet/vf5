@@ -1,0 +1,639 @@
+[
+ {
+  "lib": "cellAudio",
+  "nid": "0x0B168F92",
+  "stub": "0x005CBEB0",
+  "name": "cellAudioInit"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0x377E0CD9",
+  "stub": "0x005CBED0",
+  "name": "cellAudioSetNotifyEventQueue"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0x4109D08C",
+  "stub": "0x005CBEF0",
+  "name": "cellAudioGetPortTimestamp"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0x4129FE2D",
+  "stub": "0x005CBF10",
+  "name": "cellAudioPortClose"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0x5B1E2C73",
+  "stub": "0x005CBF30",
+  "name": "cellAudioPortStop"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0x74A66AF0",
+  "stub": "0x005CBF50",
+  "name": "cellAudioGetPortConfig"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0x89BE28F2",
+  "stub": "0x005CBF70",
+  "name": "cellAudioPortStart"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0xCA5AC370",
+  "stub": "0x005CBF90",
+  "name": "cellAudioQuit"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0xCD7BC431",
+  "stub": "0x005CBFB0",
+  "name": "cellAudioPortOpen"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0xE4046AFE",
+  "stub": "0x005CBFD0",
+  "name": "cellAudioGetPortBlockTag"
+ },
+ {
+  "lib": "cellAudio",
+  "nid": "0xFF3626FD",
+  "stub": "0x005CBFF0",
+  "name": "cellAudioRemoveNotifyEventQueue"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x055BD74D",
+  "stub": "0x005CBBD0",
+  "name": "cellGcmGetTiledPitchSize"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x0A862772",
+  "stub": "0x005CBBF0",
+  "name": "cellGcmSetQueueHandler"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x15BAE46B",
+  "stub": "0x005CBC10",
+  "name": "_cellGcmInitBody"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x21AC3697",
+  "stub": "0x005CBC30",
+  "name": "cellGcmAddressToOffset"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x3A33C1FD",
+  "stub": "0x005CBC50",
+  "name": "_cellGcmFunc15"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x4AE8D215",
+  "stub": "0x005CBC70",
+  "name": "cellGcmSetFlipMode"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x72A577CE",
+  "stub": "0x005CBC90",
+  "name": "cellGcmGetFlipStatus"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0x99D397AC",
+  "stub": "0x005CBCB0",
+  "name": "cellGcmGetReport"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xA114EC67",
+  "stub": "0x005CBCD0",
+  "name": "cellGcmMapMainMemory"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xA53D12AE",
+  "stub": "0x005CBCF0",
+  "name": "cellGcmSetDisplayBuffer"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xA547ADDE",
+  "stub": "0x005CBD10",
+  "name": "cellGcmGetControlRegister"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xB2E761D4",
+  "stub": "0x005CBD30",
+  "name": "cellGcmResetFlipStatus"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xBC982946",
+  "stub": "0x005CBD50",
+  "name": "cellGcmSetDefaultCommandBuffer"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xBD6D60D9",
+  "stub": "0x005CBD70",
+  "name": "cellGcmSetInvalidateTile"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xD0B1D189",
+  "stub": "0x005CBD90",
+  "name": "cellGcmSetTile"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xD34A420D",
+  "stub": "0x005CBDB0",
+  "name": "cellGcmSetZcull"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xDC09357E",
+  "stub": "0x005CBDD0",
+  "name": "cellGcmSetFlip"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xE315A0B2",
+  "stub": "0x005CBDF0",
+  "name": "cellGcmGetConfiguration"
+ },
+ {
+  "lib": "cellGcmSys",
+  "nid": "0xF80196C1",
+  "stub": "0x005CBE10",
+  "name": "cellGcmGetLabelAddress"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x01220224",
+  "stub": "0x005CC410",
+  "name": "cellRescGcmSurface2RescSrc"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x10DB5B1A",
+  "stub": "0x005CC430",
+  "name": "cellRescSetDsts"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x23134710",
+  "stub": "0x005CC450",
+  "name": "cellRescSetDisplayMode"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x25C107E6",
+  "stub": "0x005CC470",
+  "name": "cellRescSetConvertAndFlip"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x2EA3061E",
+  "stub": "0x005CC490",
+  "name": "cellRescExit"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x2EA94661",
+  "stub": "0x005CC4B0",
+  "name": "cellRescSetFlipHandler"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x516EE89E",
+  "stub": "0x005CC4D0",
+  "name": "cellRescInit"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x5A338CDB",
+  "stub": "0x005CC4F0",
+  "name": "cellRescGetBufferSize"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x6CD0F95F",
+  "stub": "0x005CC510",
+  "name": "cellRescSetSrc"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0x8107277C",
+  "stub": "0x005CC530",
+  "name": "cellRescSetBufferAddress"
+ },
+ {
+  "lib": "cellResc",
+  "nid": "0xD1CA0503",
+  "stub": "0x005CC550",
+  "name": "cellRescVideoOutResolutionId2RescBufferMode"
+ },
+ {
+  "lib": "cellRtc",
+  "nid": "0x2CCE9CF5",
+  "stub": "0x005CC010",
+  "name": "cellRtcGetCurrentClockLocalTime"
+ },
+ {
+  "lib": "cellRtc",
+  "nid": "0x9DAFC0D9",
+  "stub": "0x005CC030",
+  "name": "cellRtcGetCurrentTick"
+ },
+ {
+  "lib": "cellRtc",
+  "nid": "0xCB90C761",
+  "stub": "0x005CC050",
+  "name": "cellRtcGetTime_t"
+ },
+ {
+  "lib": "cellSync",
+  "nid": "0x07254FDA",
+  "stub": "0x005CC070",
+  "name": "cellSyncBarrierInitialize"
+ },
+ {
+  "lib": "cellSync",
+  "nid": "0x6C272124",
+  "stub": "0x005CC090",
+  "name": "cellSyncBarrierTryWait"
+ },
+ {
+  "lib": "cellSync",
+  "nid": "0x91F2B7B0",
+  "stub": "0x005CC0B0",
+  "name": "cellSyncMutexUnlock"
+ },
+ {
+  "lib": "cellSync",
+  "nid": "0xA9072DEE",
+  "stub": "0x005CC0D0",
+  "name": "cellSyncMutexInitialize"
+ },
+ {
+  "lib": "cellSync",
+  "nid": "0xD06918C4",
+  "stub": "0x005CC0F0",
+  "name": "cellSyncMutexTryLock"
+ },
+ {
+  "lib": "cellSysmodule",
+  "nid": "0x32267A31",
+  "stub": "0x005CC3F0",
+  "name": "cellSysmoduleLoadModule"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x02FF3C1B",
+  "stub": "0x005CC110",
+  "name": "cellSysutilUnregisterCallback"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x0BAE8772",
+  "stub": "0x005CC130",
+  "name": "cellVideoOutConfigure"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x189A74DA",
+  "stub": "0x005CC150",
+  "name": "cellSysutilCheckCallback"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x1E930EEF",
+  "stub": "0x005CC170",
+  "name": "cellVideoOutGetDeviceInfo"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x3DBD2314",
+  "stub": "0x005CC190"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x40E895D3",
+  "stub": "0x005CC1B0",
+  "name": "cellSysutilGetSystemParamInt"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x41BC2CA1",
+  "stub": "0x005CC1D0"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x4692AB35",
+  "stub": "0x005CC1F0",
+  "name": "cellAudioOutConfigure"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x50183B44",
+  "stub": "0x005CC210"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x62B0F803",
+  "stub": "0x005CC230",
+  "name": "cellMsgDialogAbort"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x75BBB672",
+  "stub": "0x005CC250",
+  "name": "cellVideoOutGetNumberOfDevice"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x887572D5",
+  "stub": "0x005CC270",
+  "name": "cellVideoOutGetState"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0x9D98AFA0",
+  "stub": "0x005CC290",
+  "name": "cellSysutilRegisterCallback"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xA322DB75",
+  "stub": "0x005CC2B0",
+  "name": "cellVideoOutGetResolutionAvailability"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xA4ED7DFE",
+  "stub": "0x005CC2D0",
+  "name": "cellSaveDataDelete"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xC01B4E7C",
+  "stub": "0x005CC2F0",
+  "name": "cellAudioOutGetSoundAvailability"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xC22C79B5",
+  "stub": "0x005CC310",
+  "name": "cellSaveDataAutoLoad"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xE558748D",
+  "stub": "0x005CC330",
+  "name": "cellVideoOutGetResolution"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xE7951DEE",
+  "stub": "0x005CC350"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xEF5A353D",
+  "stub": "0x005CC370"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xF4E3CAA0",
+  "stub": "0x005CC390",
+  "name": "cellAudioOutGetState"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xF81ECA25",
+  "stub": "0x005CC3B0",
+  "name": "cellMsgDialogOpen"
+ },
+ {
+  "lib": "cellSysutil",
+  "nid": "0xF8A175EC",
+  "stub": "0x005CC3D0",
+  "name": "cellSaveDataAutoSave"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x1573DC3F",
+  "stub": "0x005CC570",
+  "name": "sys_lwmutex_lock"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x1BC200F4",
+  "stub": "0x005CC590",
+  "name": "sys_lwmutex_unlock"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x24A1EA07",
+  "stub": "0x005CC5B0",
+  "name": "sys_ppu_thread_create"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x2F85C0EF",
+  "stub": "0x005CC5D0",
+  "name": "sys_lwmutex_create"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x350D454E",
+  "stub": "0x005CC5F0",
+  "name": "sys_ppu_thread_get_id"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x35168520",
+  "stub": "0x005CC610",
+  "name": "_sys_heap_malloc"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x44265C08",
+  "stub": "0x005CC630",
+  "name": "_sys_heap_memalign"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x5267CB35",
+  "stub": "0x005CC650",
+  "name": "sys_spinlock_unlock"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x722A0254",
+  "stub": "0x005CC670",
+  "name": "sys_spinlock_trylock"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x744680A2",
+  "stub": "0x005CC690",
+  "name": "sys_initialize_tls"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x8461E528",
+  "stub": "0x005CC6B0",
+  "name": "sys_time_get_system_time"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x8A561D92",
+  "stub": "0x005CC6D0",
+  "name": "_sys_heap_free"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0x8C2BB498",
+  "stub": "0x005CC6F0",
+  "name": "sys_spinlock_initialize"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xA2C7BA64",
+  "stub": "0x005CC710",
+  "name": "sys_prx_exitspawn_with_level"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xAEB78725",
+  "stub": "0x005CC730",
+  "name": "sys_lwmutex_trylock"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xAEDE4B03",
+  "stub": "0x005CC750",
+  "name": "_sys_heap_delete_heap"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xAFF080A4",
+  "stub": "0x005CC770",
+  "name": "sys_ppu_thread_exit"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xB2FCF2C8",
+  "stub": "0x005CC790",
+  "name": "_sys_heap_create_heap"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xC3476D0C",
+  "stub": "0x005CC7B0",
+  "name": "sys_lwmutex_destroy"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xE0DA8EFD",
+  "stub": "0x005CC7D0",
+  "name": "sys_spu_image_close"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xE6F2C1E7",
+  "stub": "0x005CC7F0",
+  "name": "sys_process_exit"
+ },
+ {
+  "lib": "sysPrxForUser",
+  "nid": "0xEBE5F72F",
+  "stub": "0x005CC810",
+  "name": "sys_spu_image_import"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0x2CB51F0D",
+  "stub": "0x005CBAD0",
+  "name": "cellFsClose"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0x4D5FF8E2",
+  "stub": "0x005CBAF0",
+  "name": "cellFsRead"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0x718BF5F8",
+  "stub": "0x005CBB10",
+  "name": "cellFsOpen"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0x7DE6DCED",
+  "stub": "0x005CBB30",
+  "name": "cellFsStat"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0xA397D042",
+  "stub": "0x005CBB50",
+  "name": "cellFsLseek"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0xBA901FE6",
+  "stub": "0x005CBB70",
+  "name": "cellFsMkdir"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0xECDCF2AB",
+  "stub": "0x005CBB90",
+  "name": "cellFsWrite"
+ },
+ {
+  "lib": "sys_fs",
+  "nid": "0xEF3EFA34",
+  "stub": "0x005CBBB0",
+  "name": "cellFsFstat"
+ },
+ {
+  "lib": "sys_io",
+  "nid": "0x1CF98800",
+  "stub": "0x005CBE30",
+  "name": "cellPadInit"
+ },
+ {
+  "lib": "sys_io",
+  "nid": "0x3AAAD464",
+  "stub": "0x005CBE50",
+  "name": "cellPadGetInfo"
+ },
+ {
+  "lib": "sys_io",
+  "nid": "0x4D9B75D5",
+  "stub": "0x005CBE70",
+  "name": "cellPadEnd"
+ },
+ {
+  "lib": "sys_io",
+  "nid": "0x8B72CDA1",
+  "stub": "0x005CBE90",
+  "name": "cellPadGetData"
+ }
+]
