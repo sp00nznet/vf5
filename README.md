@@ -510,12 +510,32 @@ Both are CRI's, in the same 0x50Bxxx neighbourhood as the CRI worker body:
 A lock / test / unlock poll. **After requesting the next state, the main thread
 polls a CRI condition that never becomes true.**
 
-That closes the loop on the earlier finding: attract mode is
-`movie/vf5adv_2ch_2.sfd`, a Sofdec video, and the file is never opened. The
-title asks CRI to start it, CRI never reports ready, and the main thread polls
-forever. So the gap really is Sofdec/ADXM playback — a video-decode subsystem
-that runs on SPU — and now there is a mechanism behind that claim rather than an
-inference from a filename.
+Resolving what those two globals actually are (TOC is `0x006BB088`):
+
+```
+func_0050B428  polls  [0x1070AA94]        == 1
+func_0050B8BC  polls  [0x1070ADA8 + 0x14] == 1   ->  [0x1070ADBC]
+```
+
+Both live in CRI's object area — `0x1070ACD8` and `0x1070AD40` are the CRI
+server-thread objects `func_005108C4` runs on. And watching both addresses for
+the whole run:
+
+**Nothing ever writes either flag. Zero writes, 150 seconds.**
+
+So the chain is complete:
+
+1. Frame 782 — the title requests the next state (`func_001CF450` →
+   `func_0019A7F0`, `mode = 1`).
+2. The main thread drops into CRI's lock / test / unlock poll.
+3. The two flags it polls are never written by anything.
+4. It polls forever, never opens `movie/vf5adv_2ch_2.sfd`, never renders again.
+
+That closes the loop on the earlier finding, and earns it: attract mode is a
+Sofdec video, the title asks CRI to start it, CRI never marks itself ready
+because its SPU-side renderer never produces, and the main thread waits on flags
+nothing sets. The gap is **Sofdec/ADXM playback** — a video-decode subsystem on
+SPU — and that is now a mechanism rather than an inference from a filename.
 
 ### The command buffer was never why it stops
 
