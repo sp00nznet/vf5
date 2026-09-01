@@ -428,6 +428,29 @@ So the delegate starting is *when* the title stops, and making the delegate run
 under the interpreter does not change that. Whether the delegate is the cause or
 just the last thing that happens first is not established.
 
+### The frame driver, for whoever picks this up
+
+Every flip's stack passes through the same chain, and the top of it is small
+enough to read directly. `func_0037AF20` is the per-frame driver:
+
+```
+0037AF2C:  bl 0x370B2C        ; returns a flag
+0037AF38:  beq -> skip
+0037AF40:  bl 0x16894         ; conditional, on a TOC global at r2-0xC10
+0037AF48:  bl 0x37AD48        ; frame stats: clears a counter block, updates,
+                              ;   then a divide-by-300 "every 300 frames" check
+0037AF4C:  bl 0x370A10
+0037AF54:  bl 0x369988
+0037AF5C:  bl 0xFA900
+0037AF64:  bl 0x3373B4
+```
+
+`func_0037AD48` turns out **not** to be the render dispatcher — it is
+per-frame bookkeeping. The render path (`func_0037A79C` → `func_00370D1C` →
+`func_001F5860`, the flip) hangs off one of the four calls after it. Narrowing
+which, and finding what it tests to decide whether to draw, is where the answer
+is.
+
 ### The command buffer was never why it stops
 
 ### The root cause was one bogus function boundary
