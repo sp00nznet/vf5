@@ -70,7 +70,7 @@ is a real test of the engine rather than a UI composite.
 | PPU lifting | **done** — 18,514 functions emitted, 7,855 unique call targets, 105 MB of C++ |
 | HLE NID table | **done** — 1,040 handlers across 88 modules |
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
-| Boot | **runs clean at ~63 fps, zero unresolved imports, zero errors** — clears and flips every frame; no geometry yet, see below |
+| Boot | **renders** — 13,874 draw groups executed, 0 dropped, 72,652 real texture binds, 142 files loaded |
 
 ### The binary
 
@@ -228,30 +228,6 @@ callback recycles.
 **The title now renders continuously for the whole run instead of dying 1.6%
 into it.**
 
-### What is still in the way
-
-`packets[seen=0] groups[seen=0]` — it clears and flips every frame but submits
-no geometry, and stops opening files at twenty. It is sitting in its load state.
-
-What the log says about that state: the loader thread (tid 5) does one
-`cond_wait(cond=4)` after the last read and is never signalled again. Its
-signaller is the main thread, which is otherwise healthy — running its frame
-loop at 63 fps, pumping an event queue that delivers ~180 events/sec, worker
-pool waking ~48 Hz. So it is a producer/consumer that has stopped handing out
-work, not a hang.
-
-Ruled out by probe, again rather than by argument:
-
-| Hypothesis | Probe | Result |
-|---|---|---|
-| The dormant `CriSr` SPU thread gates it | `RD_SPU_INTERP=1 RD_SPU_INTERP_ASYNC=1` | no change on any counter |
-| A lost wakeup on cond 4 | `FLOW_CONDKICK=1` caps infinite cond waits at 1.5 s | no change |
-| A failed file open | every `cellFs` call in the run | 20 opens, 37 reads, **zero failures** |
-
-Notable: the title never calls `cellFsLseek` despite importing it, and reads
-`voice.afs` in 2048-byte sectors — CRI's file-system shape. `cellRescInit` is
-still never reached, so nothing downstream of the load has started.
-
 ### The SPU registry gap — closed
 
 Two registries have always existed. `build_spu_workloads.py` registers each
@@ -309,138 +285,65 @@ animation data the attract screens are built from.
 (A title that never pumps sysutil would never see a deferred answer at all, so
 the old synchronous call stays as the fallback until a pump is observed.)
 
-### The current blocker: a corrupted OPD table
-
-The run ends in a named abort:
+### It renders
 
 ```
-[ppu] FATAL: stuck calling 0x500088B0 (2000 times) -- aborting run
-[ppu]   r9=0x006ADE30 -> 500088B0 6B0048B9 500088B0 6B009CBA
-[ppu]   tid=6 lr=0x00510980 r2=0x6B0048B9 r3=0x1070AD40
+[live-draw] frame 4064
+  packets[seen=13875 queued=13875]
+  groups [seen=13874 exec=13874 empty=0 drop{fetch=0 degen=0 prim=0 alloc=0
+                                             pso=0 ring=0 surface=0}]
+  clears [guest=8305]
+  textures[cached=13/1024 decodefail=2]
+  binds  [white=11982 real=72652 surf=36079]
 ```
 
-`func_005108C4` is CRI's worker body and the call is the plain ELFv1 idiom:
+13,874 draw groups executed, **nothing dropped**, 72,652 real texture binds,
+142 files loaded, 90 seconds with no abort. Before this the same counters read
+`packets[seen=0] groups[seen=0]` for the entire run.
+
+### The root cause was one bogus function boundary
+
+Everything traced back to `find_functions` planting a start at `0x00051600`,
+which is in the middle of `func_00050DB4`:
 
 ```
-005108EC:  lwz r9, 0x30(r31)   ; r9 = OPD
-005108F8:  lwz r0, 0x0(r9)     ; code
-0051090C:  lwz r2, 0x4(r9)     ; toc
-00510910:  bctrl
-00510920:  beq 0x5108EC        ; loop while the callback says "again"
+00051600:  rlwinm r10, r8, 24, 16, 23   ; mid-expression, mid-byte-swap
+00051638:  bdnz   0x515C4               ; a loop back INTO the previous function
+0005163C:  rldicl r29, r5, 0, 32
+00051678:  ld     r20, 0x1F8(r1)        ; a frame slot its caller never set up
 ```
 
-so it loops until the callback runs, and the callback can never run. But
-`r9 = 0x006ADE30` is **static data in the ELF**, and the EBOOT ships a perfectly
-good OPD table there:
+Nothing in the binary branches to `0x51600` at all. Lifted as its own function
+it continues another function's loop with loop-carried registers that were never
+set and a frame that was never allocated, so the endian-fixup-and-relocate pass
+it contains writes to garbage addresses. One of those was the OPD table at
+`0x006ADE30`, which CRI's worker dereferences — and it spun there forever.
 
-```
-file:     0050B948 006BB088   0050B99C 006BB088   0050BA90 006BB088 ...
-runtime:  500088B0 6B0048B9   500088B0 6B009CBA
-```
+`tools/merge_split_loops.py` drops a start when a **conditional branch or
+`bdnz`** inside it targets an address strictly inside the body of the
+immediately preceding, adjacent function. A loop cannot span a real function
+boundary. Unconditional `b` is excluded (a backward `b` is an ordinary tail
+call) and so is a branch to the previous function's *entry* — allowing either
+cascades and absorbs every tail-calling sibling into one giant function, which
+is what the first, looser version did: 2,248 "merges" instead of 12.
 
-Every descriptor has the correct TOC `0x006BB088` on disc. At runtime the table
-has been **overwritten with a byte-permuted copy of itself** — and the transform
-is exact:
+Twelve boundaries were wrong out of 17,856. Several sit on round addresses —
+`0x20000`, `0x1E0000`, `0x200000` — which is the shape of a page-aligned false
+positive.
 
-```
-ror64(bswap64(0x0050B948006BB088), 16) == 0x500088B06B0048B9
-```
+The chain, end to end: **one mis-split function → a loop lifted without its
+frame → a relocation pass writing to the wrong address → a scrambled OPD table
+→ CRI's audio worker spinning on a corrupt descriptor → no draws for the whole
+run.**
 
-Per 8-byte descriptor: every 16-bit halfword byte-swapped, then halfwords 1 and
-3 exchanged. That is the signature of a misaligned vector store — an
-`lvsl`/`lvsr` + `vperm` copy idiom with the wrong lane order, which is exactly
-how a PPC memcpy moves unaligned bytes. Nothing about it is game logic: the
-title's own static function table is being scrambled underneath it.
+### Not yet confirmed: what is on screen
 
-`0x500088B0` looks like a heap pointer and is not — it is a permutation of the
-real bytes that happens to land in the `_sys_heap` window's range. Chasing it as
-an allocator bug (the `_sys_heap_*` free list below was rewritten first) does
-not help: the address is byte-identical across runs and the allocator makes
-exactly **two** allocations in the whole run.
-
-**The store is named.** `PPU_GUARD_EA=006ADE30` page-guards the address at boot
-and reports every write with a host backtrace mapped back through `/MAP`:
-
-```
-[GUARD] WRITE guest=0x006ADE33 from RIP rva=0xA5AE
-[GCS] func_00050B60+0x854  func_0005163C+0x1ED9  func_000301F4+0x772
-      func_0002F2D4+0x559  func_000303D4+0x20E   func_00052AAC+0x1EE
-      func_00110464+0x3365 func_003737FC+0xECB   func_003739C4+0xC5D
-      func_0037AD48+0x1F40 func_0037AF20+0x35A   func_00017E38+0x2F7 ... main
-[GUARD]   live ctx r3=0x404B647F r4=0x404B6480 r5=0x404B647B r6=0xFFFFFFFF
-```
-
-1,025 writes, the whole 4 KB page `0x006AD000`–`0x006ADFFF`, one per word, all
-from the same site. And `func_00050B60` disassembles to exactly what the
-corruption looks like:
-
-```
-00050B60:  lwz    r9, 0x4(r3)          ; load two adjacent words
-00050B64:  lwz    r8, 0x0(r3)
-00050B68:  rlwinm r11, r9, 24, 16, 23  ; ...byte-swap both
-00050B6C:  rlwinm r0,  r9,  8, 24, 31
-           ...
-00050BA0:  stw    r0, 0x4(r3)          ; ...store them back IN PLACE
-00050BAC:  stw    r9, 0x0(r3)
-00050BB0:  beq    cr7, 0x50BBC
-00050BB4:  add    r0, r0, r4           ; ...and relocate: value += base
-00050BB8:  stw    r0, 0x4(r3)
-```
-
-**It is an endian-fixup-and-relocate pass over a table of `{value, base}`
-pairs**, run in place. Which is why the damage is a permutation of the original
-rather than junk, and why `ror64(bswap64(x), 16)` describes it so exactly.
-
-That pass has no business running over `0x006AD000`. Its own live registers say
-where it thinks it is — `r3=0x404B647F`, `r4=0x404B6480`, `r5=0x404B647B`, all
-in the *heap* region and all misaligned by 3 — while the writes land in the data
-segment. Note `r6=0xFFFFFFFF`, which for a count register is the shape of a
-runaway loop.
-
-So: a fixup pass meant for a freshly loaded buffer is walking the title's own
-static data, byte-swapping and relocating a live OPD table into nonsense, and
-CRI's worker then spins forever on the descriptor it produced.
-
-The driver is `func_0005163C`, and it reads unmistakably:
-
-```
-0005163C:  rldicl r29, r5, 0, 32   ; r29 = (u32)r5 -- the struct to fix up
-00051648:  lwz    r9, 0x44(r29)    ; byte-swap field +0x44...
-00051670:  stw    r0, 0x44(r29)
-00051678:  ld     r20, 0x1F8(r1)   ; ...add the relocation base
-0005167C:  add    r0, r0, r20
-00051688:  addi   r3, r29, 4       ; then fix up +4, +12, +20, +28, ...
-00051690:  bl     0x50B60          ; (twenty unrolled calls)
-```
-
-`r5` is the object pointer and everything follows from it. At the snapshot the
-guard caught, `r5 = 0x404B647B` — a sane heap address, `r3 = r5+4` exactly — yet
-the writes land in the data segment, so the loop that feeds `r5` is walking onto
-entries that are not in the buffer. `rldicl r29, r5, 0, 32` truncating a 64-bit
-register whose high half is garbage would do it, which is a lifter-shaped
-failure; so would a bad relocation base. Deciding between those is the next
-session's job.
-
-### Proving it is the blocker
-
-`PPU_KEEP_EA=006AD000:4096` (new) snapshots that range at load and restores it
-continuously. **A probe, not a fix** — it fights the guest for ownership of the
-memory, and anything the title legitimately writes there is reverted too. It
-exists to answer one otherwise-expensive question: if this were not being
-clobbered, how much further would the title get?
-
-Answer: **the FATAL abort disappears entirely.** The run goes the full 90
-seconds instead of aborting, and CRI's worker stops spinning. So the corruption
-is confirmed as what kills the run.
-
-It is not the last gate, and the state past it is not trustworthy (the probe is
-reverting live writes on that page too). What shows up next, for the record:
-`_cellsurMixerMain` polling **event queue 0** — an invalid id, so
-`sys_event_queue_receive` returns `ESRCH` immediately and the thread spins 1.3M
-times; 400 `bctr to NULL from func_0058A29C`; and a FIFO `put` of `0xA40000C5`,
-far outside the mapped IO space. Whether any of that is real or an artefact of
-the probe is unknown, and it should be re-measured against a real fix rather
-than treated as the next lead.
+The engine counters are the project's usual standard of evidence and they are
+unambiguous. A visual capture is not: `PrintWindow` returns white for a D3D12
+swapchain, and `CopyFromScreen` came back white too (`SetForegroundWindow`
+throws here, so the window is not compositing to a capturable desktop in this
+session). So *that VF5 renders* is established; *which screen it is showing* is
+not, and calling it the attract sequence would be a guess.
 
 ### Thread inventory
 
@@ -457,21 +360,6 @@ Worth writing down, because it renames the problem:
 
 Sony's surround mixer plus CRI's ADX movie/audio stack, with file readers
 spawned per request.
-
-### The render state is fully configured — there are simply no draws
-
-`YDKJ_RSXTRACE` over 200,000 methods of the title's own stream: surfaces
-(`0x0200`–`0x022C`), viewport (`0x0A20`–`0x0A3C`), vertex attribute offsets
-(`0x1680`–`0x16BC`) and formats (`0x1740`–`0x177C`), texture units
-(`0x1A00`+, `0x1B20`–`0x1BB4`), vertex program upload (`0x1EFC`–`0x1F0C`,
-11,222 of each), polygon/cull state (`0x1828`–`0x1840`).
-
-The sorted method list jumps straight from `0x177C` to `0x1828`: **the entire
-`0x1800`–`0x1824` draw block — `SET_BEGIN_END`, `DRAW_ARRAYS`,
-`DRAW_INDEX_ARRAY`, `INLINE_ARRAY` — is absent.** Everything is bound and
-nothing is drawn, which is a game-state problem, not a renderer one. The FIFO
-walker is demonstrably on the title's own ring by then
-(`getoff=00A550A0 put=00A550A0`), so this is what the title actually submits.
 
 ### Diagnostics added while chasing this
 
