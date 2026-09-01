@@ -70,7 +70,7 @@ is a real test of the engine rather than a UI composite.
 | PPU lifting | **done** — 18,514 functions emitted, 7,855 unique call targets, 105 MB of C++ |
 | HLE NID table | **done** — 1,040 handlers across 88 modules |
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
-| Boot | **reaches the render loop, clears the screen** — no geometry yet, see below |
+| Boot | **runs, zero unresolved imports** — clears and flips; no geometry yet, see below |
 
 ### The binary
 
@@ -126,136 +126,97 @@ nineteen of the game's own file-reader threads, and its real asset databases
 opening off the disc. Then it parks in a 60 Hz `event_queue_receive(q=3,
 timeout=16666)` and draws nothing — `groups[seen=0 exec=0]`.
 
-### Where it stopped, and what moved it
+### The boot, and every gate cleared so far
 
-**1. `sys_spinlock_*` was unimplemented — fixed.** `0x8C2BB498` / `0x722A0254` /
-`0x5267CB35` were the only unresolved NIDs in the whole boot (40 calls) and were
+**All 107 imports now dispatch to a real implementation — zero unresolved NIDs.**
+Five gaps, each one found by the previous one being closed:
+
+**1. `sys_spinlock_*`** — `0x8C2BB498` / `0x722A0254` / `0x5267CB35`, 40 calls,
 unnamed in ps3recomp's database. Brute-forcing `compute_nid()` over the
-`sysPrxForUser` export list identified them as `sys_spinlock_initialize` /
-`_trylock` / `_unlock`. Implemented in `ppu_sysprx.cpp` as a test-and-set on the
-guest word (which is all a `sys_spinlock_t` is), all four registered including
-`sys_spinlock_lock`, and the names added to `nid_database.py`. Unresolved NIDs
-for the family: **40 -> 0**.
+`sysPrxForUser` export list identified them as
+`sys_spinlock_initialize` / `_trylock` / `_unlock`. A `sys_spinlock_t` is one
+32-bit word in guest memory and nothing else, so the implementation is a host
+test-and-set on that word. All four registered, names added to the database.
 
-**2. The title's own graphics layer prints `[AMGL]:[ERROR] Command Buffer
-Overflow!`** — that string is *the game's*, not ours. This is the live frontier.
-What the FIFO trace says:
+**2. The whole `_sys_heap_*` family was unregistered.** Every function existed
+in `sysPrxForUser.c` — under a name *without* the leading underscore, so
+`gen_hle_nids.py` hashed NIDs nothing imports and the family fell through to the
+unresolved default. `_sys_heap_create_heap` handed back 0, every allocation off
+that heap returned 0, and the title took its out-of-memory path.
 
-```
-[DRAIN] getoff=0042F168 put=00AE8A84 ref=00000000 ctx.current=4A400418
-```
-
-* `_cellGcmInitBody` puts the default command buffer at IO `0..0x6FF000`
-  (`ioAddr` 0x4A400000). The title then `cellGcmMapMainMemory`s a second 4 MB at
-  0x4AB00000, which lands at IO `0x700000..0xB00000`, and drives the RSX from
-  the *last* megabyte of it — every `put` it writes is `0xA00000 + n`.
-* `get` meanwhile circulates inside the default ring at IO 0, following JUMPs
-  libgcm parked there. It burns its entire million-word budget without arriving.
-  Twisted Metal and flOw both write one ring whose JUMPs lead to `put`; VF5 does
-  not, and nothing in the walker noticed — the existing stuck-detector only
-  fires when `get` stops *moving*, and a walker going in circles moves plenty.
-* Because `get` never advances into the title's ring, the ring is never
-  reclaimed, AMGL's buffer-full callback can never free space, and `put` runs
-  off the end of its own mapping — which is the `cellGcmAddressToOffset failed
-  for 0x4AF000B0` flood (0x4AF00000 is exactly one past the 4 MB).
-
-Two rules added to the shared FIFO walker, both no-ops for a title that keeps
-up: stop honouring one-flip-per-drain once the backlog exceeds 64 KB, and treat
-a full-budget burn on several consecutive passes as "circling" and follow the
-write head (`GCM_FIFO_CIRCLE_PASSES`, default 4). Measured effect:
-
-| | before | after |
-|---|---|---|
-| `Command Buffer Overflow` in 45 s | 78,601 | 40,297 |
-| `AddressToOffset failed` | thousands | 91 |
-| guest clears reaching the engine | 342 | 819 |
-
-Real movement, not a fix. **`packets[seen=0] groups[seen=0]` — still not one
-draw**, no `SET_OBJECT` is ever decoded, and `ctrl->ref` stays `0x00000000` for
-the entire run, which is the tell: if AMGL sizes its free space off the
-reference value, nothing we do to `get` alone will ever unblock it. The walker
-is still not on the title's real command stream.
-
-The honest next step is not another walker heuristic. It is modelling which
-buffer the RSX is actually bound to — the title calls `cellGcmSetQueueHandler`
-(`0x006A8038`) and `cellGcmSetDefaultCommandBuffer`, and our implementation of
-the latter zeroes a *host* struct and ignores the switch entirely.
-
-**3. The SPU thread group never runs — and this is very likely the real
-blocker, ahead of (2).** The group is named in the log:
+**3. …which opened a message dialog, and `cellMsgDialogOpen` was unregistered
+too.** Only `Open2` was, so the older entry point got the unresolved default and
+the title waited forever for a callback that could never fire. With `Open`
+registered, the dialog is finally *visible* — and it is the game-data prompt,
+not an error:
 
 ```
-[SPU] group_create -> id=0x1000 num=1 prio=100 type=0x0 name=CriSr thread group
-[HLE] _sys_spu_image_import(img=0x401440F8 src=0x100BFB80) -> entry=0x00090 nsegs=3
-[SPU] thread_init group=0x1000 index=0 img=0x401440F8 -> tid=0x2000 entry=0x00000090
-[SPU] group_start id=0x1000 (1 thread(s), none spawned: 0 ran synchronously,
-                             1 had no fallback)
+[DIALOG] Do you want to use game data? The HDD access indicator will flash
+         while game data is in use. Do not switch off the power during this time.
+[cellMsgDialog] Auto-responding: YES
 ```
 
-`CriSr` is CRI middleware — the same family that turned out to be the whole
-story for Simpsons Arcade. `src=0x100BFB80` is an SPU ELF embedded in the
-EBOOT's last PT_LOAD, and it is **one of the four images `relift.sh` already
-extracts, lifts and registers**. It still reports "no fallback".
+**4. `cellAudioGetPortBlockTag`** — the next thing the title hit, 39 calls. The
+tag a title reads to tell whether the audio block it is about to fill has been
+consumed; without it the mixer thread has no way to advance. `read_index`
+already counted blocks consumed, so it *is* the tag counter — implemented with
+the same normalisation the hardware does.
 
-The cause is two registries where only one is consulted. `build_spu_workloads.py`
-registers each lifted image by FNV-1a-64 content fingerprint
-(`spu_workload_register_img`), which is what the SPURS path looks up. The raw
-`sys_spu_thread_group_start` path in `runtime/syscalls/lv2_register.c` only ever
-calls `spu_lookup_ppu_fallback(entry_point)` — a different table, keyed by entry
-point — so a title that starts a plain SPU thread group gets "no fallback" even
-with its image lifted and registered. VF5 uses the raw path exclusively (it
-imports no `cellSpurs` at all), so **none of its SPU code has ever executed.**
+**5. `cellAudioOutGetState`** — one call, the last one. There is no "no audio
+device" case a recompiled port can be in, so it reports enabled, LPCM, stereo,
+48 kHz.
 
-Wiring the raw path to fall back to the fingerprint registry is the next change.
-It is not a one-liner: the run needs the image's indirect-branch table id
-(`spu_begin_image`) so branches resolve in the right image, and a raw SPU thread
-is entered with four 64-bit args rather than the SPURS task ABI
-`spu_lifted_fallback` assumes. Both are knowable; neither is guesswork worth
-shipping unverified.
+Past all five the title runs properly: nineteen `flpt_readnw_thread` file
+readers, its worker pool waking ~48 Hz, its loader thread pumping a 9-second
+event queue that delivers ~180 events/sec, its asset databases open, clearing
+and flipping a black loading screen.
 
-**Also fixed on the way, though VF5 has not reached it yet:** `cellResc` was a
-pure state-tracking stub — `cellRescSetConvertAndFlip` incremented a counter and
-returned `CELL_OK` without flipping anything, and both handler setters stored a
-guest OPD in a *host* function pointer and called it directly, which is a crash
-waiting for the first title that sets one. VF5 presents entirely through RESC
-(11 imports: `SetSrc`, `SetDsts`, `SetConvertAndFlip`, `SetFlipHandler`,
-`GcmSurface2RescSrc`), so this had to be real. It now issues a real
-`cellGcmSetFlipCommand`, rotating through the display buffers the title
-registered, and invokes handlers through `ps3_invoke_guest`. The log confirms
-`cellRescInit` is never reached yet — the title is still stuck behind (3).
+### What is still in the way
+
+`packets[seen=0] groups[seen=0]` — not one draw. Rendering stops **1.6% into the
+run** and after that the log is nothing but the title's own
+`[AMGL]:[ERROR] Command Buffer Overflow!` and `cellGcmAddressToOffset failed`
+for addresses walking off the end of its own 4 MB mapping.
+
+What the FIFO evidence actually says, after several wrong turns:
+
+* `_cellGcmInitBody` puts the default command buffer at IO `0..0x6FF000`; the
+  title maps a second 4 MB at 0x4AB00000 → IO `0x700000..0xB00000` and every
+  `put` it writes is `0xA00000 + n`.
+* Its early commands (the 819 clears) *are* in the default buffer at IO 0, so
+  `get` starting at 0 is right — starting it at the title's own ring instead was
+  tried and is strictly worse (clears 819 → 12, overflows 40k → 193k). Reverted.
+* The walker does cross the ~10 MB gap (4 MB/tick) and does reach `put`. So
+  `get` catching `put` is not the missing piece either.
+* No `[JMP]`, no `[SEMA]`, no `SET_OBJECT` is ever decoded on the title's
+  stream, and `ctrl->ref` stays `0` for the entire run.
+
+So AMGL's free-space accounting is reading something we never write. It is not
+`cellGcmGetReport` (the title never calls it — with zero unresolved NIDs left,
+that is now provable rather than assumed). The remaining candidate it *does*
+import is `cellGcmGetLabelAddress`: a label AMGL writes from the FIFO and polls
+from the PPU. Nothing in the run releases a semaphore into the label window,
+which would leave that poll reading its initial value forever. That is the next
+thread to pull.
 
 ### What the SPU interpreter ruled out
 
-`RD_SPU_INTERP=1` makes the raw thread-group path interpret an image instead of
-instant-completing it, so the CriSr thread can be made to run today without the
-registry fix. Worth knowing what that buys:
-
-| | baseline | `RD_SPU_INTERP` | `+ RD_SPU_INTERP_ASYNC` |
-|---|---|---|---|
-| files opened | 19 | **1** | 19 |
-| guest clears | 819 | 0 | 819 |
-| draw packets | 0 | 0 | 0 |
-| `cellRescInit` reached | no | no | no |
-
-Synchronously it is worse than useless — CriSr is a persistent service loop, so
-`group_start` never returns and the boot stops after one file. Asynchronously it
-is a wash: identical to baseline on every counter. So **"the SPU thread never
-runs" is not by itself what is holding the title**, even though it is a genuine
-gap worth closing. Something else in the load path is still waiting on
-something, and the next session should find out what before spending more time
-on the FIFO.
+`RD_SPU_INTERP=1` runs the `CriSr` thread today without wiring the raw
+thread-group path into the fingerprint registry. Re-measured *after* the dialog
+fix (the first measurement was taken at a stall the title had not yet reached,
+and was worthless): synchronously it is worse than useless — CriSr is a
+persistent service loop, so `group_start` never returns and the boot stops after
+one file instead of twenty. Asynchronously it is a wash, identical to baseline
+on every counter. The dormant SPU thread is a real gap; it is not this one.
 
 ### Diagnostics added while chasing this
 
 Both in `ps3recomp/libs/video/cellGcmSys.c`, both off by default:
 
 * `GCM_FIFO_SNAP=N` — dumps the raw words at *both* ends of the ring, what
-  `get` is about to decode and what the title just wrote at `put`. This is what
-  showed the two ends were in different buffers.
+  `get` is about to decode and what the title just wrote at `put`.
 * `GCM_DRAINDBG=1` now also prints `[DRAINEND] <reason>` — why each pass
-  stopped and how far it got. Every break site is tagged. A pass that ends far
-  short of `put` every tick is the signature of a FIFO that can never catch up,
-  and the reason is the whole diagnosis.
+  stopped and how far it got, with every break site in the walk tagged.
 
 ## Building
 
