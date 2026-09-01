@@ -398,11 +398,49 @@ segment. Note `r6=0xFFFFFFFF`, which for a count register is the shape of a
 runaway loop.
 
 So: a fixup pass meant for a freshly loaded buffer is walking the title's own
-static data instead, byte-swapping and relocating a live OPD table into
-nonsense, and CRI's worker then spins forever on the descriptor it produced.
-Whether the wrong pointer is a lifter bug in the address arithmetic or a real
-count that our runtime made bogus is the open question, and
-`func_0005163C` — the immediate caller, which computes both — is where to look.
+static data, byte-swapping and relocating a live OPD table into nonsense, and
+CRI's worker then spins forever on the descriptor it produced.
+
+The driver is `func_0005163C`, and it reads unmistakably:
+
+```
+0005163C:  rldicl r29, r5, 0, 32   ; r29 = (u32)r5 -- the struct to fix up
+00051648:  lwz    r9, 0x44(r29)    ; byte-swap field +0x44...
+00051670:  stw    r0, 0x44(r29)
+00051678:  ld     r20, 0x1F8(r1)   ; ...add the relocation base
+0005167C:  add    r0, r0, r20
+00051688:  addi   r3, r29, 4       ; then fix up +4, +12, +20, +28, ...
+00051690:  bl     0x50B60          ; (twenty unrolled calls)
+```
+
+`r5` is the object pointer and everything follows from it. At the snapshot the
+guard caught, `r5 = 0x404B647B` — a sane heap address, `r3 = r5+4` exactly — yet
+the writes land in the data segment, so the loop that feeds `r5` is walking onto
+entries that are not in the buffer. `rldicl r29, r5, 0, 32` truncating a 64-bit
+register whose high half is garbage would do it, which is a lifter-shaped
+failure; so would a bad relocation base. Deciding between those is the next
+session's job.
+
+### Proving it is the blocker
+
+`PPU_KEEP_EA=006AD000:4096` (new) snapshots that range at load and restores it
+continuously. **A probe, not a fix** — it fights the guest for ownership of the
+memory, and anything the title legitimately writes there is reverted too. It
+exists to answer one otherwise-expensive question: if this were not being
+clobbered, how much further would the title get?
+
+Answer: **the FATAL abort disappears entirely.** The run goes the full 90
+seconds instead of aborting, and CRI's worker stops spinning. So the corruption
+is confirmed as what kills the run.
+
+It is not the last gate, and the state past it is not trustworthy (the probe is
+reverting live writes on that page too). What shows up next, for the record:
+`_cellsurMixerMain` polling **event queue 0** — an invalid id, so
+`sys_event_queue_receive` returns `ESRCH` immediately and the thread spins 1.3M
+times; 400 `bctr to NULL from func_0058A29C`; and a FIFO `put` of `0xA40000C5`,
+far outside the mapped IO space. Whether any of that is real or an artefact of
+the probe is unknown, and it should be re-measured against a real fix rather
+than treated as the next lead.
 
 ### Thread inventory
 
