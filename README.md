@@ -303,24 +303,28 @@ the old synchronous call stays as the fallback until a pump is observed.)
 
 ### What is on screen
 
+![VF5 drawing the CRIWARE boot logo](docs/criware.png)
+
 ![VF5 drawing its own NOW LOADING screen](docs/now_loading.png)
 
 `LD_FRAME_DUMP=<dir>` (new) writes the presented surface to a `.ppm` every N
 flips. It exists because there is no external way to see a D3D12 swapchain here
--- `PrintWindow` returns white, and so does `CopyFromScreen` when the window is
-not compositing to a capturable desktop -- and the engine's own dumps only fire
+— `PrintWindow` returns white, and so does `CopyFromScreen` when the window is
+not compositing to a capturable desktop — and the engine's own dumps only fire
 at shutdown or from the parity harness.
 
-The frame is 1280x720 with every pixel non-black, and the text is the game's
-own: **NOW LOADING**, in VF5's font, drawn from the sprite and font archives it
-loads. This is the first picture out of the port.
+Both frames are 1280x720 and both are the game's own output: its **NOW LOADING**
+screen in VF5's font from the sprite and font archives it loads, then the
+**CRIWARE / Technology by ADX · Sofdec** boot logo, with the logo visibly
+*fading in and out* across consecutive dumps — the animation is running, not a
+still.
 
-It is also, plainly, the loading screen. **Attract mode has not been reached** —
-the title renders, but its load does not complete, so it never advances to the
-idle/demo sequence. The background reading white where it should be dark is a
-second thing to chase (a clear colour or blend state), and run-to-run the group
-count varies a lot (742 to 13,874 in otherwise identical runs), which says
-something is still racing.
+**Attract mode has not been reached.** The title gets through its load and into
+the boot-logo sequence, then holds on the CRIWARE screen and stops presenting
+around flip 1,700. It has already opened the attract archives by then —
+`rom/2d/spr_s_adv.farc`, `spr_s_wadv.farc`, `aet_s_adv.bin`, `aet_s_wadv.bin`
+("adv" being the arcade term for the attract/advertise demo) — so the assets the
+idle screen is built from are loaded and it simply never advances to them.
 
 ### The root cause was one bogus function boundary
 
