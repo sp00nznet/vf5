@@ -446,10 +446,20 @@ enough to read directly. `func_0037AF20` is the per-frame driver:
 ```
 
 `func_0037AD48` turns out **not** to be the render dispatcher — it is
-per-frame bookkeeping. The render path (`func_0037A79C` → `func_00370D1C` →
-`func_001F5860`, the flip) hangs off one of the four calls after it. Narrowing
-which, and finding what it tests to decide whether to draw, is where the answer
-is.
+per-frame bookkeeping (a counter block, some updates, a divide-by-300 "every
+300 frames" check).
+
+And the render path cannot be mapped from the disassembly at all. Scanning every
+`bl` in the executable segment finds **zero direct callers of
+`func_0037A79C`**, the function every flip's stack passes through, and the four
+candidate calls after `0x37AD48` make 2, 1, 0 and 0 direct calls between them.
+The whole render dispatch is indirect — function pointers and vtables, which is
+what a scene graph looks like.
+
+So the next instrument is an **indirect-call tracer**: log `bctrl` targets per
+thread, diff the last good frame against the first missing one. Static reading
+will not get there, and neither will another environment variable on the
+existing tools. That is the honest end of what this session can establish.
 
 ### The command buffer was never why it stops
 
