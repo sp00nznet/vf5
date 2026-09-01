@@ -485,10 +485,37 @@ small enough to read whole:
 001CF488:  li   r3, 1             ; return 1
 ```
 
-That is a state transition: the title walks through this door on frame 782 and
-never renders again. `func_0019A7F0` and the list walk in `func_00373414` are
-what to read next, and the ten functions that stop being called name the state
-it left.
+`func_0019A7F0` is seven instructions — `obj->0x4C = 1; if (mode in {1,2})
+obj->0x58 = 1` — a "request mode 1" on a global. So frame 782 is where the title
+*asks for the next state*.
+
+### And this is what it does instead of rendering
+
+Dumping the same ring long after the transition (`HLE_BT_EVERY` now dumps it
+too) gives the answer outright. Thread 1's last 512 indirect calls are:
+
+```
+0050B8BC 0050B428 0050B8BC 0050B428 0050B8BC 0050B428 ... (all 512)
+```
+
+**Two functions, alternating, forever** — and every one of the title's own
+functions (`0x17E38` main, `0x12620`, `0x220E4`, …) has stopped being called.
+Both are CRI's, in the same 0x50Bxxx neighbourhood as the CRI worker body:
+
+* `func_0050B428` — takes a lock (`0x50B2B0`), tests a global at `r2+0x42F8`
+  against 1, releases (`0x50B320`)
+* `func_0050B8BC` — tests a global at `r2+0x426C`'s `+0x14` against 1, calls
+  `0x50B4C4`
+
+A lock / test / unlock poll. **After requesting the next state, the main thread
+polls a CRI condition that never becomes true.**
+
+That closes the loop on the earlier finding: attract mode is
+`movie/vf5adv_2ch_2.sfd`, a Sofdec video, and the file is never opened. The
+title asks CRI to start it, CRI never reports ready, and the main thread polls
+forever. So the gap really is Sofdec/ADXM playback — a video-decode subsystem
+that runs on SPU — and now there is a mechanism behind that claim rather than an
+inference from a filename.
 
 ### The command buffer was never why it stops
 
