@@ -5,9 +5,8 @@
 
 *Virtua Fighter 5* is Yu Suzuki's series at its most austere: no items, no
 gimmicks, seventeen fighters and a frame-perfect combat engine that AM2 built on
-the Lindbergh arcade board and brought to PS3 in early 2007. It is also, by a
-wide margin, the **cleanest recompilation target in the PS3 retail library** —
-see below.
+the Lindbergh arcade board and brought to PS3 in early 2007. It is also an unusually clean
+recompilation target — see below.
 
 This project takes the disc's own `EBOOT.BIN`, disassembles every PowerPC
 function, lifts them to C++, and links the result against
@@ -21,21 +20,19 @@ libraries that stand in for the PS3 operating system. Same approach as
 
 ## Why this title
 
-Picked out of a 1,080-title sweep of the USA retail library
-(`scout/SCOUT.md`), triaged on the one signal that predicts porting effort —
-the real `proc_prx_param` → libstub import table, not genre and not binary size.
+Static recompilation cost is set by a title's *operating-system surface* — the
+`proc_prx_param` → libstub import table — far more than by genre, binary size or
+how the game looks. VF5's is unusually small:
 
-VF5 came back with the **smallest OS surface in the entire library**:
+| | |
+|---|---|
+| Imported functions | **107** |
+| Imported modules | **10** |
+| PSN / online imports | **0** |
+| `cellSpurs` imports | **0** |
+| exec segment | 6.3 MB |
 
-| | VF5 | Twisted Metal | flOw | YDKJ |
-|---|---|---|---|---|
-| Imported functions | **107** | 439 | — | 265 |
-| Imported modules | **10** | 34 | — | 23 |
-| PSN / online imports | **0** | 111 | some | 4 modules |
-| `cellSpurs` imports | **0** | 46 | yes | yes |
-| exec segment | 6.3 MB | 16 MB | — | 5.2 MB |
-
-Ten modules, all of them already implemented in ps3recomp:
+The whole list, and every one of the ten already implemented in ps3recomp:
 
 ```
 cellSysutil(23)  sysPrxForUser(22)  cellGcmSys(19)  cellAudio(11)
@@ -43,19 +40,21 @@ cellResc(11)     sys_fs(8)          cellSync(5)     sys_io(4)
 cellRtc(3)       cellSysmodule(1)
 ```
 
-That is the whole list. **No `sceNp`, no `sys_net`, no `cellNetCtl`** — nothing
-to gate the boot on a PSN handshake, which is what Twisted Metal spends its
-first seconds on and what Jackbox (222 online imports) would drown in. **No
-`cellSpurs`** — the SPURS jobchain/task pipeline that parked Simpsons Arcade for
-weeks and still parks flOw simply is not in this binary. VF5 drives its four SPU
-programs through raw `sys_spu_thread_group_*` plus five `cellSync` primitives,
-which is the path ps3recomp implements most directly.
+That is the entire OS dependency. **No `sceNp`, no `sys_net`, no `cellNetCtl`**
+— nothing to gate the boot on a PSN handshake. **No `cellSpurs`** — the SPURS
+jobchain/task pipeline that has been the long pole on other ports is simply not
+in this binary; VF5 drives its four SPU programs through raw
+`sys_spu_thread_group_*` plus five `cellSync` primitives, the path ps3recomp
+implements most directly.
 
-The bet: with caner's live NV4097 → D3D12 engine now executing titles' real
-vertex and fragment programs, a title whose only real dependencies are GCM,
-audio, pad and the filesystem should reach geometry with the least new runtime
-work of anything in the library — and it is a genuine 3D game, so what it draws
-is a real test of the engine rather than a UI composite.
+The bet: with the live NV4097 → D3D12 engine executing titles' real vertex and
+fragment programs, a title whose only real dependencies are GCM, audio, pad and
+the filesystem should reach geometry with the least new runtime work — and it is
+a genuine 3D game, so what it draws is a real test of the engine rather than a
+UI composite.
+
+It held. `vf5.exe` linked on the first attempt with **nothing title-specific in
+the tree**: no `hle_extra.cpp`, no forked `boot_main`, no patched functions.
 
 ## Status
 
@@ -96,564 +95,32 @@ is also the section that holds the `.lib.stub` import trampolines
 packed into the same R-X segment, which is exactly the data-as-code trap that
 cost flOw and YDKJ multi-gigabyte lifts.
 
-## First boot
+## What is on screen
 
-`vf5.exe` linked on the first attempt with **nothing title-specific in the
-tree** — no `hle_extra.cpp`, no bespoke `boot_main`, no patched functions. That
-is the whole argument for this title, and it held.
+![NOW LOADING](docs/now_loading.png)
 
-What the first run does:
+![CRIWARE boot logo](docs/criware.png)
 
-```
-[cellGame] title id from PARAM.SFO: 'BLUS30020'
-[crt] sys_initialize_tls: block 0x0E000000, r13=0x0E007000
-[sys_memory] allocate(size=0xA400000)                      164 MB heap
-[HLE] _cellGcmInitBody(cmdSize=0x6FF000, ioSize=0x700000)
-[cellGcmSys] SetTile x15                                   the title's own RSX tile map
-[cellVideoOut] GetResolution(id=2) -> 1280x720
-init_display:1280x720                                      <- the title's own log line
-[cellGcmSys] SetDisplayBuffer(id=0/1/2, pitch=5120, 1280x720)
-[live-draw] display buffer 0/1/2 registered
-[rsx] live-draw engine up (D3D12); backend init OK -- window open
-[cellPad] Init(max_connect=2)
-[SYS] sys_ppu_thread_create ... name="flpt_readnw_thread"  x19
-[fs] open .../objset/obj_db.bin, tex_db.bin, rom/2d/aet_db.bin,
-     rom/rob/mot_db.farc, rom/live_data.farc, ps3/en/GAMEDATA.farc,
-     lang/en/string_array.bin, sound/voice_en/voice.als, ...
-```
+Both read back from the D3D12 swapchain with `LD_FRAME_DUMP` — the title's own
+**NOW LOADING** screen in its own font, from the sprite and font archives it
+loads, then the **CRIWARE** boot logo, animating across consecutive frames.
 
-So: CRT, TLS, heap, GCM, the title's fifteen RSX tiles, triple-buffered 720p
-display buffers registered with the live engine, a D3D12 window, pad init,
-nineteen of the game's own file-reader threads, and its real asset databases
-opening off the disc. Then it parks in a 60 Hz `event_queue_receive(q=3,
-timeout=16666)` and draws nothing — `groups[seen=0 exec=0]`.
+## Where it stops
 
-### The boot, and every gate cleared so far
+At guest flip 782 the title requests its next state, a constructor clears a
+one-byte render gate at `0x104D320A`, and nothing ever sets it back. Holding
+that byte at 1 restores rendering — 780 → 7,940 flips — but the frames come out
+blank, because the state behind the gate has no content: the Sofdec video it
+exists to play (`movie/vf5adv_2ch_2.sfd`) never decodes.
 
-**All 107 imports now dispatch to a real implementation — zero unresolved NIDs.**
-Five gaps, each one found by the previous one being closed:
+**Attract mode needs CRI Sofdec video playback**, an SPU decode subsystem
+ps3recomp does not implement. That is the one remaining thing between this port
+and its attract sequence.
 
-**1. `sys_spinlock_*`** — `0x8C2BB498` / `0x722A0254` / `0x5267CB35`, 40 calls,
-unnamed in ps3recomp's database. Brute-forcing `compute_nid()` over the
-`sysPrxForUser` export list identified them as
-`sys_spinlock_initialize` / `_trylock` / `_unlock`. A `sys_spinlock_t` is one
-32-bit word in guest memory and nothing else, so the implementation is a host
-test-and-set on that word. All four registered, names added to the database.
-
-**2. The whole `_sys_heap_*` family was unregistered.** Every function existed
-in `sysPrxForUser.c` — under a name *without* the leading underscore, so
-`gen_hle_nids.py` hashed NIDs nothing imports and the family fell through to the
-unresolved default. `_sys_heap_create_heap` handed back 0, every allocation off
-that heap returned 0, and the title took its out-of-memory path.
-
-**3. …which opened a message dialog, and `cellMsgDialogOpen` was unregistered
-too.** Only `Open2` was, so the older entry point got the unresolved default and
-the title waited forever for a callback that could never fire. With `Open`
-registered, the dialog is finally *visible* — and it is the game-data prompt,
-not an error:
-
-```
-[DIALOG] Do you want to use game data? The HDD access indicator will flash
-         while game data is in use. Do not switch off the power during this time.
-[cellMsgDialog] Auto-responding: YES
-```
-
-**4. `cellAudioGetPortBlockTag`** — the next thing the title hit, 39 calls. The
-tag a title reads to tell whether the audio block it is about to fill has been
-consumed; without it the mixer thread has no way to advance. `read_index`
-already counted blocks consumed, so it *is* the tag counter — implemented with
-the same normalisation the hardware does.
-
-**5. `cellAudioOutGetState`** — one call, the last one. There is no "no audio
-device" case a recompiled port can be in, so it reports enabled, LPCM, stereo,
-48 kHz.
-
-Past all five the title runs properly: nineteen `flpt_readnw_thread` file
-readers, its worker pool waking ~48 Hz, its loader thread pumping a 9-second
-event queue that delivers ~180 events/sec, its asset databases open, clearing
-and flipping a black loading screen.
-
-### AMGL's command buffer — found and fixed
-
-The title's own error message turned out to be the cheapest breakpoint
-available. `TTY_BT="Command Buffer Overflow"` (new, below) gives the chain, and
-it lands in textbook libgcm `gcmReserve` at `0x00595358`:
-
-```
-00595370:  lwz   r10, 0x8(r3)     ; current = ctx->current
-00595374:  lwz   r0,  0x4(r3)     ; end     = ctx->end
-00595378:  addi  r9, r10, 8       ; need 8 more bytes
-00595384:  cmplw cr7, r9, r0
-00595388:  bgt   cr7, 0x5953C0    ; no room -> call ctx->callback
-...
-005953D4:  bctrl
-005953DC:  cmpdi cr7, r3, 0
-005953E0:  bne   cr7, <return>    ; non-zero: give up
-005953E4:  lwz   r10, 0x8(r31)    ; zero: reload current and write ANYWAY
-```
-
-and the callback AMGL installed, `0x0048BB70`, is *only*:
-
-```
-0048BBB4:  lwz  r3, 0x2948(r2)    ; "[AMGL]:[ERROR] Command Buffer Overflow!"
-0048BBC4:  bl   0x539FB0          ; printf
-0048BBD0:  li   r3, 0             ; ...and return 0
-```
-
-`gcmReserve` reads 0 as "retry" and writes past `end` regardless. That was the
-overrun.
-
-Then `GCM_CTXDBG=1` (new) showed *which* buffer:
-
-```
-[CTX] gCellGcmCurrentContext@0x1071CDC0 -> 0x1071CDB0  begin=4AE00000
-      end=4AE7FFFC current=4AE004E4 callback=006A8030  (ours=0x0F800000)
-```
-
-The title never uses the context `cellGcmInit` handed back. It drives a **512 KB
-ring of its own at EA 0x4AE00000** — exactly where every `put` it writes
-resolves — with its own do-nothing callback. Hardware never fills that ring
-because it is recycled once the RSX has consumed it, so the runtime now does
-that on the title's context when it is provably safe: the walker has drained
-everything submitted (`get == put`) and `current` is within a page of `end`.
-Append the JUMP at `current` the way the SDK's own callback does, reset
-`current` to `begin`, point `put`/`get` there. Inert for any title whose own
-callback recycles.
-
-| | before | after |
-|---|---|---|
-| `Command Buffer Overflow` | 144,709 | **0** |
-| `AddressToOffset failed` | 1,802 | **0** |
-| guest clears reaching the engine | 819, stopping 1.6% in | **2,038 and still climbing at cutoff** |
-| frame rate | ~32 fps | **~63 fps** |
-
-**The title now renders continuously for the whole run instead of dying 1.6%
-into it.**
-
-### The SPU registry gap — closed
-
-Two registries have always existed. `build_spu_workloads.py` registers each
-lifted image by FNV-1a-64 content fingerprint, which is what the `cellSpurs`
-path looks up; `sys_spu_thread_group_start` only ever called
-`spu_lookup_ppu_fallback(entry_point)`, a different table. VF5 imports **no
-`cellSpurs` at all** and drives one plain SPU thread group, so it reported "no
-fallback" with its image lifted and registered the whole time — none of its SPU
-code had ever run. Now:
-
-```
-[SPU] thread tid=0x2000 image @0x100BFB80 (124468 bytes) matched lifted
-      workload fp=0x5E90B27CBCB5CC2E image_id=2
-[SPU] group_start id=0x1000 tid=0x2000 -> spawned host thread
-```
-
-`group_start` only sees the `sys_spu_image` *descriptor* and the registry is
-keyed by the ELF's bytes, so `_sys_spu_image_import` now records which ELF each
-descriptor came from. The image is the one the thread group is named for:
-`CriSr thread group` — CRI's sound renderer, feeding the `_cellsurMixerMain`
-thread. It runs the lifted code and stays alive, as a service loop should.
-
-It did not move the boot on its own, but it is a genuine title-agnostic gap and
-every future title driving raw SPU thread groups needed it closed.
-
-### The dialog answer was arriving too early
-
-The biggest single unlock of the session, and it had nothing to do with
-graphics. `cellMsgDialogOpen2` invoked the guest callback **synchronously, from
-inside the open call, before it returned**. Hardware does not: the answer
-arrives later, from the title's own `cellSysutilCheckCallback`. The difference
-is not cosmetic —
-
-```
-state = WAITING;
-cellMsgDialogOpen(..., cb, &state);   // our cb sets state = DONE, right here
-state = WAITING;                      // ...and the title overwrites it
-```
-
-— and a title that arms its wait state *after* the call loses the answer and
-waits forever. That is exactly what VF5 does, and it is why it sat on a black
-screen with its render state fully configured and nothing to draw.
-
-Deferred to the pump, in the same 55 seconds:
-
-| | before | after |
-|---|---|---|
-| files opened | 20 | **123** |
-
-and what it opens is the front end: the `vf5ps3_j*.adx` music set, both voice
-banks, `spr_c_cmn`/`spr_n_cmn` sprite archives, `spr_c_fnt`/`spr_c_fnt24` fonts,
-**`shader_cg_88.farc`**, and `aet_c_cmn.bin` / `aet_n_cmn.bin` — the UI
-animation data the attract screens are built from.
-
-(A title that never pumps sysutil would never see a deferred answer at all, so
-the old synchronous call stays as the fallback until a pump is observed.)
-
-### It renders
-
-```
-[live-draw] frame 4064
-  packets[seen=13875 queued=13875]
-  groups [seen=13874 exec=13874 empty=0 drop{fetch=0 degen=0 prim=0 alloc=0
-                                             pso=0 ring=0 surface=0}]
-  clears [guest=8305]
-  textures[cached=13/1024 decodefail=2]
-  binds  [white=11982 real=72652 surf=36079]
-```
-
-13,874 draw groups executed, **nothing dropped**, 72,652 real texture binds,
-142 files loaded, 90 seconds with no abort. Before this the same counters read
-`packets[seen=0] groups[seen=0]` for the entire run.
-
-### What is on screen
-
-![VF5 drawing the CRIWARE boot logo](docs/criware.png)
-
-![VF5 drawing its own NOW LOADING screen](docs/now_loading.png)
-
-`LD_FRAME_DUMP=<dir>` (new) writes the presented surface to a `.ppm` every N
-flips. It exists because there is no external way to see a D3D12 swapchain here
-— `PrintWindow` returns white, and so does `CopyFromScreen` when the window is
-not compositing to a capturable desktop — and the engine's own dumps only fire
-at shutdown or from the parity harness.
-
-Both frames are 1280x720 and both are the game's own output: its **NOW LOADING**
-screen in VF5's font from the sprite and font archives it loads, then the
-**CRIWARE / Technology by ADX · Sofdec** boot logo, with the logo visibly
-*fading in and out* across consecutive dumps — the animation is running, not a
-still.
-
-**Attract mode has not been reached.** The title gets through its load and into
-the boot-logo sequence, then holds on the CRIWARE screen and stops presenting
-around flip 1,600. It has already opened the attract archives by then —
-`rom/2d/spr_s_adv.farc`, `spr_s_wadv.farc`, `aet_s_adv.bin`, `aet_s_wadv.bin`
-("adv" being the arcade term for the attract/advertise demo) — so the assets the
-idle screen is built from are loaded and it simply never advances to them.
-
-### Where it stops, precisely
-
-The stall lines up with a second SPU thread group starting:
-
-```
-[SPU] group_create -> id=0x1001 num=2 prio=100 name=SPU Delegate
-[SPU] thread tid=0x2001 image @0x10097C80 (163536 bytes) matched lifted
-      workload fp=0x4D26A2BCEDC9D2FA image_id=1
-[SPU] group_start id=0x1001 tid=0x2001 -> spawned host thread
-[SPU] thread tid=0x2002 image @0x10097C80 ... -> spawned host thread
-[ppu] lv2_syscall 187 (stub)      <- sys_spu_thread_set_spu_cfg
-[ppu] lv2_syscall 188 (stub)      <- sys_spu_thread_get_spu_cfg
-```
-
-"SPU Delegate" is the group a fighting game runs its geometry, animation and
-render work on. Both its threads find their lifted image and spawn — the
-registry fix earlier in the session is what lets that happen at all — and then
-the title stops presenting and AMGL starts reporting overflow. The overflow is
-downstream: with the PPU waiting on SPU results that never come, its ring fills.
-
-### What the stall is not
-
-The halt is deterministic — the same flip, ~1,650, every run. Four things were
-tried against it and none moved it, which is worth recording so they are not
-tried again:
-
-| Attempt | Result |
-|---|---|
-| `SPU_INTERP_UNLIFTED=1` — interpret the SPU code the delegate threads branch into rather than ending the job at "branch to LS 0" | the threads stop instantly-completing and run properly; **same stall** |
-| lv2 187/188 (`sys_spu_thread_set_spu_cfg` / `get_spu_cfg`) implemented — they were stubs, called exactly here | **same stall** |
-| Ring recycle relaxed from "FIFO fully drained" to "head of the ring consumed" | fires where the old condition had stopped firing; **same stall** |
-| Ring recycle forced once `current` has already passed `end` (a wedged ring can never recover on its own) | **same stall** |
-| A 600-second run | frames still stop at the same count |
-
-So the halt is upstream of both the FIFO and the SPU dispatch. The AMGL overflow
-that follows it is a consequence — the PPU stops consuming, its ring fills — not
-the cause.
-
-### Attract mode is a Sofdec movie, and the title stops immediately before it
-
-`GCM_FLIPCOUNT=1` (new) counts every flip with a timestamp — `FLIP_DBG` caps at
-20 lines, which answers "did it ever flip?" and not "is it still flipping?".
-It also showed that the live engine's own frame counter is not the guest's frame
-rate: that counts the ticker's presents, which keep going after the title stops.
-The guest numbers are unambiguous:
-
-```
-[flip] 1   at 0 ms
-[flip] 500 at 43157 ms
-[flip] 700 at 49969 ms      <- and nothing for the remaining 150 s
-```
-
-**VF5 renders at 14–29 fps for fifty seconds and then its render loop stops
-dead**, while the main thread carries on making HLE calls (1.44 M of them, still
-climbing, deep in `func_0037AD48` / `func_003739C4` — the title's own state
-machine). Not slow. Not deadlocked. Stopped rendering.
-
-And the disc says what it was about to do:
-
-```
-vfs/PS3_GAME/USRDIR/movie/vf5adv_2ch_2.sfd      <- "adv" = advertise/attract
-vfs/PS3_GAME/USRDIR/movie/vf5adv_51ch_2.sfd
-vfs/PS3_GAME/USRDIR/movie/vf5verBadv_2ch_2.sfd
-```
-
-**Attract mode is a Sofdec movie.** The title loads the attract UI archives
-(`spr_s_adv.farc`, `aet_s_adv.bin`), finishes the CRIWARE logo — and then stops,
-without ever opening `vf5adv_2ch_2.sfd`. Its CRI ADXM (Sofdec) threads are up
-(`cri_adxm_vv_proc` / `_vsync_proc` / `_fs_proc` / `_idle_proc`) and the live
-engine's `movie=` counter never leaves zero.
-
-### The gate is the SPU Delegate, located exactly
-
-`GCM_FLIP_BT=<n>` (new) dumps the flipping thread's guest stack for flips
-n-5..n+5, and the flip counter now prints every 10 rather than every 100 —
-"it stopped somewhere in this hundred" is not an answer. That found the
-transition in one run.
-
-The title accelerates to **58 fps** and stops dead at **flip 782**, and the very
-next lines in the log are:
-
-```
-[SPU] thread_init group=0x1001 index=1 -> tid=0x2002
-[SPU] group_start id=0x1001 (2 host threads running, 0 instant)
-[spurs-job] img=1 returned to the job manager (branch to LS 0) -- job complete
-```
-
-The **"SPU Delegate"** group starts immediately after the last flip, its threads
-report complete without running anything real — they branch to local store 0,
-which the runtime reads as "job finished" — and the title stops rendering,
-because from that point it expects the SPU to produce the work.
-
-`SPU_INTERP_UNLIFTED=1` makes the delegate threads actually execute — "job
-complete" drops from many to one — and **it does not help**. Guest flips stop at
-780 with it on, at 49 s, exactly as without it. A first, slower run reached only
-flip 341 in 216 s and looked like it was still going; it had simply not got to
-the stop point yet, and reading that as "it keeps flipping" was wrong.
-
-So the delegate starting is *when* the title stops, and making the delegate run
-under the interpreter does not change that. Whether the delegate is the cause or
-just the last thing that happens first is not established.
-
-### The frame driver, for whoever picks this up
-
-Every flip's stack passes through the same chain, and the top of it is small
-enough to read directly. `func_0037AF20` is the per-frame driver:
-
-```
-0037AF2C:  bl 0x370B2C        ; returns a flag
-0037AF38:  beq -> skip
-0037AF40:  bl 0x16894         ; conditional, on a TOC global at r2-0xC10
-0037AF48:  bl 0x37AD48        ; frame stats: clears a counter block, updates,
-                              ;   then a divide-by-300 "every 300 frames" check
-0037AF4C:  bl 0x370A10
-0037AF54:  bl 0x369988
-0037AF5C:  bl 0xFA900
-0037AF64:  bl 0x3373B4
-```
-
-`func_0037AD48` turns out **not** to be the render dispatcher — it is
-per-frame bookkeeping (a counter block, some updates, a divide-by-300 "every
-300 frames" check).
-
-And the render path cannot be mapped from the disassembly at all. Scanning every
-`bl` in the executable segment finds **zero direct callers of
-`func_0037A79C`**, the function every flip's stack passes through, and the four
-candidate calls after `0x37AD48` make 2, 1, 0 and 0 direct calls between them.
-The whole render dispatch is indirect — function pointers and vtables, which is
-what a scene graph looks like.
-
-So the instrument is an **indirect-call tracer**, and it now exists:
-`BCTRL_RING=<file>` keeps the last 512 indirect targets per thread and the flip
-window dumps them, to their own file — a 512-entry line on stderr interleaves
-with everything else and a spliced ring is worse than none.
-
-Diffing flip 777 (rendering normally) against flip 782 (the last one) gives a
-one-line answer:
-
-```
-only in flip 782: 001CF450
-only in flip 777: 00026AA4 00026AFC 0002F9C0 0002F9CC 0002FAC0
-                  0002FD00 000300A8 000309DC 00031FE0 00036934
-```
-
-**`func_001CF450` is called for the first time on the last frame the title
-draws**, and ten functions in the 0x26xxx–0x36xxx range stop being called. It is
-small enough to read whole:
-
-```
-001CF450:  lwz  r9, -0x43D8(r2)   ; a TOC global
-001CF458:  li   r4, 1
-001CF464:  lwz  r3, 0x0(r9)
-001CF468:  bl   0x19A7F0          ; enter, with (obj, 1)
-001CF470:  bl   0x36B8D0          ; ...which is a bare `blr` -- a stub
-001CF478:  lwz  r3, -0x43BC(r2)
-001CF47C:  bl   0x373414          ; walks an intrusive list
-001CF488:  li   r3, 1             ; return 1
-```
-
-`func_0019A7F0` is seven instructions — `obj->0x4C = 1; if (mode in {1,2})
-obj->0x58 = 1` — a "request mode 1" on a global. So frame 782 is where the title
-*asks for the next state*.
-
-### Rendering is switched off on purpose, and never switched back on
-
-The frame loop never stops. `func_0037A79C`, the per-frame dispatcher, has a
-three-instruction gate in it:
-
-```
-0037A834:  bl    0x370B10        ; the predicate
-0037A83C:  cmpdi cr7, r3, 0
-0037A840:  beq   cr7, 0x37A890   ; 0 -> skip the render entirely
-0037A844:  bl    0x370D1C        ; the render call
-```
-
-and `func_00370B10` is three instructions itself:
-
-```
-00370B10:  lwz r9, -0xD58(r2)    ; TOC global -> object 0x104D3208
-00370B14:  lbz r3, 0x2(r9)       ; a single byte at 0x104D320A
-00370B18:  blr
-```
-
-Watching that byte for a whole run (`YDKJ_AWATCH8=104D320A`) gives **exactly one
-write**:
-
-```
-[AWATCH8] write8 0x104D320A = 0x00  tid=1
-[GSTACK:aw8-writer] lr=0x0037BD0C
-```
-
-The main thread clears it, once, from `func_0037BCA0` — a state-object
-constructor that fills a dozen fields and then calls `func_003711E4`, which
-turns rendering off. Nothing ever writes it again.
-
-**So VF5 is not hung, not starved and not erroring. It disables rendering on
-purpose while it brings up the next state, and that state never becomes ready.**
-Which state: the one whose content is `movie/vf5adv_2ch_2.sfd`, a Sofdec video
-that is never opened because CRI's movie path is not implemented here.
-
-The full chain, every step evidenced:
-
-1. Frame 782 — `func_001CF450` → `func_0019A7F0` requests mode 1
-2. `func_0037BCA0` constructs the state; `func_003711E4` clears the render gate
-   at `0x104D320A`
-3. `func_00370B10` reads that byte; `func_0037A79C` skips its render call
-4. Nothing sets it back, because the state never finishes coming up
-5. `movie/vf5adv_2ch_2.sfd` is never opened
-
-### Confirmed by intervention
-
-`PPU_POKE8=104D320A:1` with `PPU_POKE_AFTER_MS=45000` holds the render gate on
-from 45 s in — after the title has loaded normally, so the run still opens all
-134 files. Result:
-
-| | baseline | gate held on |
-|---|---|---|
-| guest flips | 780 | **7,940** |
-| files loaded | 134 | 134 |
-
-The title renders continuously instead of stopping. **The gate is the
-mechanism.** (Forcing it from t=0 instead proves nothing — the title then opens
-15 files, because the assertion changes its behaviour on the way to the moment
-in question.)
-
-And the frames it draws with the gate held on are **blank white**. The gate was
-what stopped the picture; the state behind it has no content, because the Sofdec
-movie that state exists to play never loads.
-
-So: implementing Sofdec/ADXM playback — an SPU video-decode subsystem — is the
-one remaining thing between this port and attract mode. That is now established
-by making the thing happen, not by inference from a filename.
-
-### The command buffer was never why it stops
-
-### The root cause was one bogus function boundary
-
-Everything traced back to `find_functions` planting a start at `0x00051600`,
-which is in the middle of `func_00050DB4`:
-
-```
-00051600:  rlwinm r10, r8, 24, 16, 23   ; mid-expression, mid-byte-swap
-00051638:  bdnz   0x515C4               ; a loop back INTO the previous function
-0005163C:  rldicl r29, r5, 0, 32
-00051678:  ld     r20, 0x1F8(r1)        ; a frame slot its caller never set up
-```
-
-Nothing in the binary branches to `0x51600` at all. Lifted as its own function
-it continues another function's loop with loop-carried registers that were never
-set and a frame that was never allocated, so the endian-fixup-and-relocate pass
-it contains writes to garbage addresses. One of those was the OPD table at
-`0x006ADE30`, which CRI's worker dereferences — and it spun there forever.
-
-`tools/merge_split_loops.py` drops a start when a **conditional branch or
-`bdnz`** inside it targets an address strictly inside the body of the
-immediately preceding, adjacent function. A loop cannot span a real function
-boundary. Unconditional `b` is excluded (a backward `b` is an ordinary tail
-call) and so is a branch to the previous function's *entry* — allowing either
-cascades and absorbs every tail-calling sibling into one giant function, which
-is what the first, looser version did: 2,248 "merges" instead of 12.
-
-Twelve boundaries were wrong out of 17,856. Several sit on round addresses —
-`0x20000`, `0x1E0000`, `0x200000` — which is the shape of a page-aligned false
-positive.
-
-The chain, end to end: **one mis-split function → a loop lifted without its
-frame → a relocation pass writing to the wrong address → a scrambled OPD table
-→ CRI's audio worker spinning on a corrupt descriptor → no draws for the whole
-run.**
-
-### Not yet confirmed: what is on screen
-
-The engine counters are the project's usual standard of evidence and they are
-unambiguous. A visual capture is not: `PrintWindow` returns white for a D3D12
-swapchain, and `CopyFromScreen` came back white too (`SetForegroundWindow`
-throws here, so the window is not compositing to a capturable desktop in this
-session). So *that VF5 renders* is established; *which screen it is showing* is
-not, and calling it the attract sequence would be a guess.
-
-### Thread inventory
-
-Worth writing down, because it renames the problem:
-
-| tid | name | state |
-|---|---|---|
-| 1 | main | frame loop, clears + flips |
-| 3 | `_sys_mixerSurBusReq` | Sony libmixer |
-| 4 | `_cellsurMixerMain` | pumps event queue 1 — healthy |
-| 5 | `cri_dlg` | idle on cond 4 (normal with no dialogue queued) |
-| 6–9 | `cri_adxm_{vv,vsync,fs,idle}_proc` | CRI ADXM workers; **tid 7 is the one that aborts** |
-| 10+ | `flpt_readnw_thread` | spawned per read request |
-
-Sony's surround mixer plus CRI's ADX movie/audio stack, with file readers
-spawned per request.
-
-### Diagnostics added while chasing this
-
-Both in `ps3recomp/libs/video/cellGcmSys.c`, both off by default:
-
-* `GCM_FIFO_SNAP=N` — dumps the raw words at *both* ends of the ring, what
-  `get` is about to decode and what the title just wrote at `put`.
-* `GCM_DRAINDBG=1` now also prints `[DRAINEND] <reason>` — why each pass
-  stopped and how far it got, with every break site in the walk tagged.
-* `GCM_CTXDBG=1` — report `gCellGcmCurrentContext`: which context the title is
-  actually driving, and its begin/end/current/callback. This is what showed VF5
-  never uses the one `cellGcmInit` handed back.
-* `GCM_GET_EQ_PUT=1` — publish `get` as having reached `put`. A probe, not a
-  fix: it removes the back-pressure a title uses to avoid overwriting commands
-  the GPU has not read. It answers one question — is the title reading `get`?
-
-And elsewhere in the runtime:
-
-* `MSGDIALOG_ANSWER=no` — answer every yes/no prompt NO instead of YES. The
-  auto-answer is a guess about what the title wants and yes is not always the
-  boot-friendliest branch. (For VF5 it changes nothing; the prompt was not the
-  gate — but that took one run to establish rather than a rebuild.)
-
-
-* `TTY_BT=<substring>` — dump the call chain whenever the title prints a line
-  containing it. Three hooks in that function and one in `lv2_register.c`
-  already did exactly this for one hardcoded string each, which only ever
-  helped the title they were written for. A title's own error message is the
-  cheapest breakpoint there is: it fires exactly when the thing went wrong, on
-  the thread it went wrong on. Link with `/MAP` and every RVA in the chain maps
-  straight back to a `func_XXXXXXXX`, i.e. a guest address. This is what found
-  AMGL's `gcmReserve` above.
+The full trace — every gate cleared on the way, the root-cause fixes, and the
+readings that turned out to be wrong — is in
+[docs/investigation.md](docs/investigation.md). The tools used are listed in
+[docs/diagnostics.md](docs/diagnostics.md).
 
 ## Building
 
@@ -693,7 +160,9 @@ src/compat/      <dirent.h>/<unistd.h> Windows shims for clang-cl
 src/recomp/      lifted PPU tree                                (git-ignored)
 src/gen/         generated HLE NID table                        (git-ignored)
 src/spu_gen/     lifted SPU images                              (git-ignored)
-tools/relift.sh  regenerates every one of the above
+tools/           relift.sh regenerates every one of the above, plus
+                 merge_split_loops.py and a screenshot helper
+docs/            the working log, the diagnostics list, and two frame captures
 ```
 
 Nothing derived from the game binary is committed. `tools/relift.sh`
