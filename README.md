@@ -124,44 +124,49 @@ established that Sofdec is what this stop is.)*
 
 ### The stop, precisely
 
-The title renders continuously and never presents. Over five minutes:
+The title renders its four boot logos, loads the sprite and animation archives
+for its **advertise** (attract/title) sequence -- `rom/2d/spr_s_adv.farc`,
+`aet_s_adv.bin` -- and then stops flipping, while still burning ~1.2 cores.
 
-```
-21,701  render-target / viewport changes
-   636  cellGcmSetDefaultCommandBuffer          <- it keeps resetting its ring
-   976  cellGcmAddressToOffset FAILED
-    20  draws
-     0  flips after frame ~3,650
-```
+Three real bugs were found and fixed on the way here, each removing a distinct
+failure. None of them is the last one.
 
-It is not deadlocked -- it burns ~1.2 cores the whole time.
+**1. `cellGcmAddressToOffset` failed 976 times a boot.** ps3recomp auto-maps an
+unmapped main-memory page on first use, but the fallback was gated on
+`address < 0x40000000` -- a magic number, not a description. VF5's RSX heap
+lives at 0x4A900000..0x4B400000 and it hands the RSX 0x4B400040, which fell past
+the bound. With no offsets there was nothing to draw with. **976 -> 0.**
 
-**The 976 failures are the thread to pull, and they are all the same shape:**
-every failing address sits immediately past the memory the title mapped.
+**2. Its AMGL keeps its own command buffers.** `GCM_CTXDBG=1` shows the title
+repointing `gCellGcmCurrentContext` away from ours at
+`begin=0x4B300000 end=0x4B37FFFC`, with its own callback, and moving it again as
+each segment fills. It calls `cellGcmSetDefaultCommandBuffer` to recover;
+ps3recomp only zeroed a host-side struct, so the title stayed on the exhausted
+segment and asked again -- 636 times, with 91 `[AMGL]:[ERROR] Command Buffer
+Overflow!`. Run with **`GCM_DEFAULT_CTX_REPOINT=1`** and that goes to **0
+overflows**, with command packets reaching the draw engine up from 12,756 to
+15,097 over the same five minutes.
 
-```
-Init(cmdSize=0x6FF000, ioSize=0x700000, ioAddr=0x4A900000)   0x4A900000..0x4B000000
-MapMainMemory(ea=0x4B000000, size=0x400000)                  0x4B000000..0x4B400000
-AddressToOffset failed for 0x4B400040, 0x4B400070, 0x4B400080, ...
-```
+**3. Its save load is not a blocker, and the dialog about it is a red herring.**
+`cellSaveDataFixedLoad2` looks for the prefix `BLUS30020-SYSTEM`; with no save
+its own funcStat puts up *"Do you want to cancel the load operation?"* from
+inside the callback and returns `ERR_NODATA`. Answered YES the title accepts
+that and carries on; answered NO it retries forever and reaches frame 544
+instead of 3,800. So ps3recomp's default blanket YES is the right answer here,
+counter-intuitive as that reads -- see `MSGDIALOG_ANSWER` upstream.
 
-The obvious suspicion was a second mapping being refused quietly, since every
-validation branch in `cellGcmMapMainMemory` used to return *before* its only log
-line. That is fixed upstream (each refusal now names itself), and it settles the
-question the other way: there is **one** MapMainMemory call in a whole boot and
-it succeeds. So the title is using main memory it never asked us to map, and
-without offsets for it there is nothing to draw with -- hence 20 draws, hence
-the ring resets, hence no flip.
+**What is left.** With all three in place the FIFO is fully drained every tick
+(`getoff == put`), `ref` is never used by this title at all (`GCM_SCANREF`
+reports **0** `SET_REFERENCE` commands in the whole ring), the live engine drops
+nothing (`exec` equals `seen`), and the title still stops after loading its
+attract assets. Holding the render gate at `0x104D320A`
+(`PPU_FORCE_READ_ADDR=104D320A PPU_FORCE_READ_VAL=1`) makes it flip 23,040 times
+with zero packets and black frames, so that skips the rendering state rather
+than unblocking it.
 
-**Where that leaves the render gate.** Holding the one-byte gate at `0x104D320A`
-(`PPU_FORCE_READ_ADDR=104D320A PPU_FORCE_READ_VAL=1`) does make the title flip
-freely -- 23,040 frames against 3,648 and a stall -- but with **zero** command
-packets reaching the engine and every frame black. It skips the state in which
-the title renders rather than unblocking it, which is worth knowing and is not a
-fix.
-
-The live NV4097 engine drops nothing throughout (`exec` equals `seen`, all
-`drop` counters zero), so the missing work is on the title's side of the FIFO.
+The next question is what the title is waiting on between loading
+`spr_s_adv.farc` and drawing it -- it is not the FIFO, not a fence, and not the
+save.
 
 ## Building
 
@@ -183,7 +188,7 @@ cmake --build build
 
 # 4. run, through the live NV4097 -> D3D12 engine
 PS3_VFS_ROOT=vfs PS3_HDD0_ROOT=$PWD/gamedata/dev_hdd0 \
-    RSX_LIVE_DRAW=1 ./build/vf5 game/EBOOT.elf
+    GCM_DEFAULT_CTX_REPOINT=1 RSX_LIVE_DRAW=1 ./build/vf5 game/EBOOT.elf
 ```
 
 Two things in that line are easy to get wrong, and both look like a port bug
