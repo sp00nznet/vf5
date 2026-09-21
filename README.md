@@ -225,6 +225,13 @@ New-Item -ItemType Junction -Path gamedata\dev_hdd0\game\BLUS30020\USRDIR `
          -Target (Resolve-Path vfs\PS3_GAME\USRDIR)
 ```
 
+**Save data.** The title loads a system save at boot and looks for the prefix
+`BLUS30020-SYSTEM` under `gamedata/dev_hdd0/home/00000001/savedata`. A load of
+an absent save legitimately reports no data and the boot carries on, so creating
+it is optional -- but an *empty* directory of that name is not a save, and
+ps3recomp now says so (isNewData keys on PARAM.SFO). Before that fix an empty
+one made the title's stat callback report its save BROKEN.
+
 A junction rather than a copy: the installed USRDIR *is* the disc's USRDIR, so
 there is no reason to spend the disk space. With that in place the title runs
 its real check through to `[DIALOG] Check complete.`, opens every file it asks
