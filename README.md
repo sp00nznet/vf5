@@ -69,9 +69,11 @@ the tree**: no `hle_extra.cpp`, no forked `boot_main`, no patched functions.
 | PPU lifting | **done** — 18,514 functions emitted, 7,855 unique call targets, 105 MB of C++ |
 | HLE NID table | **done** — 1,040 handlers across 88 modules |
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
-| Boot | **renders** — 13,874 draw groups executed, 0 dropped, 72,652 real texture binds, 134 files loaded, zero unresolved imports |
-| On screen | **its own NOW LOADING and CRIWARE screens**, 58 fps — see below |
-| Attract mode | **not reached** — needs CRI Sofdec video decode; the stop is traced and confirmed by intervention |
+| Boot | **renders** — 0 dropped draw groups, zero failed file opens, zero unresolved imports |
+| Game data install | **done** — the title's own check runs to "Check complete."; needs the one-time setup in *Building* |
+| On screen | **NOW LOADING, then "Presented by SEGA", then the CRIWARE logo** — its own boot sequence, read back from the swapchain |
+| Past the logos | **not reached** — parks on the CRIWARE splash |
+| Attract mode | **not reached** — needs CRI Sofdec video decode |
 
 ### The binary
 
@@ -107,20 +109,46 @@ loads, then the **CRIWARE** boot logo, animating across consecutive frames.
 
 ## Where it stops
 
-At guest flip 782 the title requests its next state, a constructor clears a
-one-byte render gate at `0x104D320A`, and nothing ever sets it back. Holding
-that byte at 1 restores rendering — 780 → 7,940 flips — but the frames come out
-blank, because the state behind the gate has no content: the Sofdec video it
-exists to play (`movie/vf5adv_2ch_2.sfd`) never decodes.
+It parks on the **CRIWARE splash**, having rendered its own boot sequence to get
+there: NOW LOADING, then "Presented by SEGA", then the CRIWARE logo with its
+ADX/Sofdec sub-marks. All three are read back from the D3D12 swapchain with
+`LD_FRAME_DUMP`, so they are what the port actually drew, not what it claims.
 
-**Attract mode needs CRI Sofdec video playback**, an SPU decode subsystem
-ps3recomp does not implement. That is the one remaining thing between this port
-and its attract sequence.
+Ten minutes on the splash with input being pressed throughout does not move it.
 
-The full trace — every gate cleared on the way, the root-cause fixes, and the
-readings that turned out to be wrong — is in
-[docs/investigation.md](docs/investigation.md). The tools used are listed in
-[docs/diagnostics.md](docs/diagnostics.md).
+**The earlier analysis in this section was made against a broken setup** and is
+removed rather than corrected. It said the stop was a one-byte render gate at
+`0x104D320A` cleared at guest flip 782, with attract mode needing CRI Sofdec.
+That measurement was taken with `PS3_VFS_ROOT` pointing one directory too deep
+and no game data installed -- so the title was failing 339 file opens per run
+and had already been told its game data was corrupt. Whatever it was doing at
+flip 782, it was not the boot path a correctly-set-up run takes. Sofdec is still
+missing and will still be needed for the attract movie; it is no longer
+established that Sofdec is what this stop is.
+
+The live NV4097 engine reports no losses at the splash -- every packet it is
+handed executes:
+
+```
+packets[seen=10122 queued=10122] groups[seen=10122 exec=10122 empty=0
+  drop{fetch=0 degen=0 prim=0 alloc=0 pso=0 ring=0 surface=0}]
+```
+
+so the next thing to chase is on the title's side of the FIFO, not ours.
+
+**One lead, unresolved.** The title's own graphics layer prints
+
+```
+[AMGL]:[ERROR] Command Buffer Overflow!
+```
+
+tens of thousands of times per boot -- it believes its RSX command ring is full.
+Running with `GCM_GET_EQ_PUT=1` (a ps3recomp probe that reports `get` as having
+reached `put`, removing the back-pressure) roughly doubles the frame rate, which
+says the title genuinely reads `get` and genuinely blocks on it. A `get`-poll
+kick mirroring ps3recomp's existing `GCM_REFPOLL` was tried and measured as
+making no difference, so why `get` lags is still open. Whether the overflow is
+merely slowing the boot or actually holding the splash is not established.
 
 ## Building
 
@@ -141,8 +169,53 @@ cmake -S . -B build -G Ninja \
 cmake --build build
 
 # 4. run, through the live NV4097 -> D3D12 engine
-PS3_VFS_ROOT=vfs/PS3_GAME/USRDIR RSX_LIVE_DRAW=1 ./build/vf5 game/EBOOT.elf
+PS3_VFS_ROOT=vfs PS3_HDD0_ROOT=$PWD/gamedata/dev_hdd0 \
+    RSX_LIVE_DRAW=1 ./build/vf5 game/EBOOT.elf
 ```
+
+Two things in that line are easy to get wrong, and both look like a port bug
+rather than a setup mistake.
+
+**`PS3_VFS_ROOT` is `vfs`, not `vfs/PS3_GAME/USRDIR`.** The title asks for its
+files by full guest path (`/dev_bdvd/PS3_GAME/USRDIR/rom/sound/snd_db.txt`) and
+the VFS joins that under the root, so pointing the root at the USRDIR doubles
+the path:
+
+```
+[fs] open FAIL '/dev_bdvd/PS3_GAME/USRDIR/rom/sound/snd_db.txt'
+  -> 'vfs/PS3_GAME/USRDIR/PS3_GAME/USRDIR/rom/sound/snd_db.txt'
+```
+
+339 failed opens per run. This README documented the wrong root until now,
+which is worth saying plainly: the earlier "134 files loaded" figure was
+measured with most of the disc unreachable.
+
+**Virtua Fighter 5 needs its game data installed, or it refuses to start.** On
+a real PS3 the title copies its streamed audio and movies to the HDD on first
+run, then checks that install. With nothing there it puts up its own dialog and
+stops:
+
+```
+[DIALOG] Do you want to use game data? ...
+[DIALOG] Game data is corrupt. To use game data...please exit the game and
+         delete this game data.
+```
+
+That is the title behaving correctly on a machine where the install never
+happened, not a recompilation failure. Emulate the install once:
+
+```powershell
+New-Item -ItemType Directory -Force gamedata\dev_hdd0\game\BLUS30020
+Copy-Item vfs\PS3_GAME\PARAM.SFO gamedata\dev_hdd0\game\BLUS30020\
+Copy-Item vfs\PS3_GAME\ICON0.PNG gamedata\dev_hdd0\game\BLUS30020\
+New-Item -ItemType Junction -Path gamedata\dev_hdd0\game\BLUS30020\USRDIR `
+         -Target (Resolve-Path vfs\PS3_GAME\USRDIR)
+```
+
+A junction rather than a copy: the installed USRDIR *is* the disc's USRDIR, so
+there is no reason to spend the disk space. With that in place the title runs
+its real check through to `[DIALOG] Check complete.`, opens every file it asks
+for -- **zero** failed opens -- and boots on through its logo sequence.
 
 `RSX_LIVE_DRAW=1` selects caner's ([@canersaka](https://github.com/canersaka))
 live draw engine, wired into ps3recomp's *generic* boot harness rather than
