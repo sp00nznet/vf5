@@ -155,18 +155,50 @@ that and carries on; answered NO it retries forever and reaches frame 544
 instead of 3,800. So ps3recomp's default blanket YES is the right answer here,
 counter-intuitive as that reads -- see `MSGDIALOG_ANSWER` upstream.
 
-**What is left.** With all three in place the FIFO is fully drained every tick
-(`getoff == put`), `ref` is never used by this title at all (`GCM_SCANREF`
-reports **0** `SET_REFERENCE` commands in the whole ring), the live engine drops
-nothing (`exec` equals `seen`), and the title still stops after loading its
-attract assets. Holding the render gate at `0x104D320A`
-(`PPU_FORCE_READ_ADDR=104D320A PPU_FORCE_READ_VAL=1`) makes it flip 23,040 times
-with zero packets and black frames, so that skips the rendering state rather
-than unblocking it.
+**What is left, traced to the instruction.** The main thread is in a **tight
+busy-wait** -- no sleep, no syscall, which is why it burns ~1.2 cores while
+doing nothing:
 
-The next question is what the title is waiting on between loading
-`spr_s_adv.farc` and drawing it -- it is not the FIFO, not a fence, and not the
-save.
+```
+func_0052A5CC:
+loc_0052A5FC:   r3 = r31            ; the object
+                r4 = r30            ; the value it is waiting for
+                bl  func_0052A544   ; predicate
+                cmpwi r3, 0
+                beq loc_0052A5FC    ; spin while false
+```
+
+`func_0052A544` returns true only when `[obj+0x3C] == r4` **and**
+`[obj+4] == 0`. Probing the loop:
+
+```
+[VF5SPIN] obj=0x10708A10 want=1 [obj+0]=1 [obj+4]=1 [obj+0x3C]=1 [obj+0x38]=92
+```
+
+The counter already matches. **The blocker is `[obj+4]`, a pending flag that is
+set and never cleared.** A write watch over the object names both writers and
+the absence of a third:
+
+```
+[ww] 0x10708A10 <- 0x1        guest-fn=0x0052AC48    ; request initialised
+[ww] 0x10708A20 <- 0x11       guest-fn=0x0052AC48
+[ww] 0x10708A14 <- 0x1        guest-fn=0x0052B494    ; marked pending
+                                                     ; ...and nothing after
+```
+
+`func_0052B494` takes a lock, checks the entry is free, bumps the sequence at
+`+0x3C`, marks it pending and returns; the consumer that should clear `+4` never
+runs. The object sits at `0x10708A10`, immediately below the CRI ADX Manager
+thread arguments (`0x1070AC08`-`0x1070AD40`), so it is a CRI server request.
+
+Those server threads are alive, not deadlocked -- a syscall trace shows
+`cri_adxm_vsync_proc`, `cri_adxm_fs_proc` and `cri_adxm_idle_proc` cycling
+through mutex and condvar syscalls throughout the stall. They are running and
+simply never take this request.
+
+**So the open question is narrow:** what makes a CRI ADXM server thread pick up
+a queued request, and which of its preconditions is not true here. It is not the
+FIFO, not a fence, not the save, not the mappings, and not a dead thread.
 
 ## Building
 
