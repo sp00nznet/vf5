@@ -71,8 +71,8 @@ the tree**: no `hle_extra.cpp`, no forked `boot_main`, no patched functions.
 | Build & link | **done** — 89 MB x86-64 exe, clang-cl 21 + Ninja, 0 errors, no title-specific code |
 | Boot | **renders** — 0 dropped draw groups, zero failed file opens, zero unresolved imports |
 | Game data install | **done** — the title's own check runs to "Check complete."; needs the one-time setup in *Building* |
-| On screen | **NOW LOADING, then "Presented by SEGA", then the CRIWARE logo** — its own boot sequence, read back from the swapchain |
-| Past the logos | **not reached** — parks on the CRIWARE splash |
+| On screen | **NOW LOADING, "Presented by SEGA", CRIWARE, "Created by AM2"** — its own boot sequence, read back from the swapchain |
+| Past the logos | **not reached** — renders four boot logos, then renders without presenting |
 | Attract mode | **not reached** — needs CRI Sofdec video decode |
 
 ### The binary
@@ -109,46 +109,59 @@ loads, then the **CRIWARE** boot logo, animating across consecutive frames.
 
 ## Where it stops
 
-It parks on the **CRIWARE splash**, having rendered its own boot sequence to get
-there: NOW LOADING, then "Presented by SEGA", then the CRIWARE logo with its
-ADX/Sofdec sub-marks. All three are read back from the D3D12 swapchain with
-`LD_FRAME_DUMP`, so they are what the port actually drew, not what it claims.
+It renders its own boot sequence -- **NOW LOADING**, **"Presented by SEGA"**,
+the **CRIWARE** logo with its ADX/Sofdec sub-marks, and **"Created by AM2, AM
+R&D DEPT. #2"** -- all read back from the D3D12 swapchain with `LD_FRAME_DUMP`,
+so they are what the port actually drew. Then it stops, without ever reaching a
+title screen.
 
-Ten minutes on the splash with input being pressed throughout does not move it.
+*(The analysis that used to be here located the stop at a render gate cleared at
+guest flip 782 and concluded attract mode needed CRI Sofdec. It was measured
+while the title was failing 339 file opens a run and had already been told its
+game data was corrupt, so it was not describing the boot a correct run takes.
+Sofdec is still absent and still needed for the attract movie; it is no longer
+established that Sofdec is what this stop is.)*
 
-**The earlier analysis in this section was made against a broken setup** and is
-removed rather than corrected. It said the stop was a one-byte render gate at
-`0x104D320A` cleared at guest flip 782, with attract mode needing CRI Sofdec.
-That measurement was taken with `PS3_VFS_ROOT` pointing one directory too deep
-and no game data installed -- so the title was failing 339 file opens per run
-and had already been told its game data was corrupt. Whatever it was doing at
-flip 782, it was not the boot path a correctly-set-up run takes. Sofdec is still
-missing and will still be needed for the attract movie; it is no longer
-established that Sofdec is what this stop is.
+### The stop, precisely
 
-The live NV4097 engine reports no losses at the splash -- every packet it is
-handed executes:
+The title renders continuously and never presents. Over five minutes:
 
 ```
-packets[seen=10122 queued=10122] groups[seen=10122 exec=10122 empty=0
-  drop{fetch=0 degen=0 prim=0 alloc=0 pso=0 ring=0 surface=0}]
+21,701  render-target / viewport changes
+   636  cellGcmSetDefaultCommandBuffer          <- it keeps resetting its ring
+   976  cellGcmAddressToOffset FAILED
+    20  draws
+     0  flips after frame ~3,650
 ```
 
-so the next thing to chase is on the title's side of the FIFO, not ours.
+It is not deadlocked -- it burns ~1.2 cores the whole time.
 
-**One lead, unresolved.** The title's own graphics layer prints
+**The 976 failures are the thread to pull, and they are all the same shape:**
+every failing address sits immediately past the memory the title mapped.
 
 ```
-[AMGL]:[ERROR] Command Buffer Overflow!
+Init(cmdSize=0x6FF000, ioSize=0x700000, ioAddr=0x4A900000)   0x4A900000..0x4B000000
+MapMainMemory(ea=0x4B000000, size=0x400000)                  0x4B000000..0x4B400000
+AddressToOffset failed for 0x4B400040, 0x4B400070, 0x4B400080, ...
 ```
 
-tens of thousands of times per boot -- it believes its RSX command ring is full.
-Running with `GCM_GET_EQ_PUT=1` (a ps3recomp probe that reports `get` as having
-reached `put`, removing the back-pressure) roughly doubles the frame rate, which
-says the title genuinely reads `get` and genuinely blocks on it. A `get`-poll
-kick mirroring ps3recomp's existing `GCM_REFPOLL` was tried and measured as
-making no difference, so why `get` lags is still open. Whether the overflow is
-merely slowing the boot or actually holding the splash is not established.
+The obvious suspicion was a second mapping being refused quietly, since every
+validation branch in `cellGcmMapMainMemory` used to return *before* its only log
+line. That is fixed upstream (each refusal now names itself), and it settles the
+question the other way: there is **one** MapMainMemory call in a whole boot and
+it succeeds. So the title is using main memory it never asked us to map, and
+without offsets for it there is nothing to draw with -- hence 20 draws, hence
+the ring resets, hence no flip.
+
+**Where that leaves the render gate.** Holding the one-byte gate at `0x104D320A`
+(`PPU_FORCE_READ_ADDR=104D320A PPU_FORCE_READ_VAL=1`) does make the title flip
+freely -- 23,040 frames against 3,648 and a stall -- but with **zero** command
+packets reaching the engine and every frame black. It skips the state in which
+the title renders rather than unblocking it, which is worth knowing and is not a
+fix.
+
+The live NV4097 engine drops nothing throughout (`exec` equals `seen`, all
+`drop` counters zero), so the missing work is on the title's side of the FIFO.
 
 ## Building
 
