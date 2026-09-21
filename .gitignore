@@ -70,3 +70,4 @@ shots/
 shot_*.png
 *.ppm
 bctrl*.txt
+build-gate/
